@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   load_input(input, N, V, S, W);
   
   initialize_translator(parameter_fname, N);
-  // warmup_translator(input, output, W, N); 
+  warmup_translator(input, output, W, N);
  
   if (mpi_rank == 0) {
     fprintf(stderr, " Translating %d sentence(s) ... ", N);
