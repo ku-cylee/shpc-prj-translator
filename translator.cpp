@@ -10,7 +10,7 @@ static int INPUT_VOCAB_SIZE = 4345;
 static int OUTPUT_VOCAB_SIZE = 2803;
 
 /*
- * Tensor 
+ * Tensor
  * @brief : A multi-dimensional matrix containing elements of a single data type.
  *
  * @member buf    : Data buffer containing elements
@@ -19,8 +19,8 @@ static int OUTPUT_VOCAB_SIZE = 2803;
  */
 Tensor::Tensor(std::vector<int> shape_) {
   ndim = shape_.size();
-  for (int i=0; i<ndim; ++i) { 
-    shape[i] = shape_[i]; 
+  for (int i=0; i<ndim; ++i) {
+    shape[i] = shape_[i];
   }
   int N_ = num_elem();
   buf = (float *)calloc(N_, sizeof(float));
@@ -28,13 +28,13 @@ Tensor::Tensor(std::vector<int> shape_) {
 
 Tensor::Tensor(std::vector<int> shape_, float *buf_) {
   ndim = shape_.size();
-  for (int i=0; i<ndim; ++i) { 
-    shape[i] = shape_[i]; 
+  for (int i=0; i<ndim; ++i) {
+    shape[i] = shape_[i];
   }
   int N_ = num_elem();
   buf = (float *) malloc(N_ * sizeof(float));
   for (int n = 0; n < N_; ++n) {
-    buf[n] = buf_[n]; 
+    buf[n] = buf_[n];
   }
 }
 
@@ -52,8 +52,8 @@ int Tensor::num_elem() {
 
 void Tensor::fill_zeros() {
   int N_ = num_elem();
-  for (int n=0; n<N_; ++n) { 
-    buf[n] = 0.0; 
+  for (int n=0; n<N_; ++n) {
+    buf[n] = 0.0;
   }
 }
 
@@ -73,7 +73,7 @@ Tensor *dW_attn, *db_attn, *dW_attn_comb, *db_attn_comb, *dW_out, *db_out;
 // Encoder Activations
 Tensor *encoder_hidden, *encoder_outputs;
 Tensor *encoder_embedded;
-Tensor *encoder_rtmp1, *encoder_rtmp2, *encoder_rtmp3, *encoder_rtmp4, *encoder_rtmp5, *encoder_rt; 
+Tensor *encoder_rtmp1, *encoder_rtmp2, *encoder_rtmp3, *encoder_rtmp4, *encoder_rtmp5, *encoder_rt;
 Tensor *encoder_ztmp1, *encoder_ztmp2, *encoder_ztmp3, *encoder_ztmp4, *encoder_ztmp5, *encoder_zt;
 Tensor *encoder_ntmp1, *encoder_ntmp2, *encoder_ntmp3, *encoder_ntmp4, *encoder_ntmp5, *encoder_ntmp6, *encoder_nt;
 Tensor *encoder_htmp1, *encoder_htmp2, *encoder_htmp3, *encoder_ht;
@@ -82,7 +82,7 @@ Tensor *encoder_htmp1, *encoder_htmp2, *encoder_htmp3, *encoder_ht;
 Tensor *decoder_input, *decoder_output, *decoder_hidden, *decoded_words, *decoder_embedded, *decoder_embhid;
 Tensor *decoder_attn, *decoder_attn_weights, *decoder_attn_applied, *decoder_embattn;
 Tensor *decoder_attn_comb, *decoder_relu;
-Tensor *decoder_rtmp1, *decoder_rtmp2, *decoder_rtmp3, *decoder_rtmp4, *decoder_rtmp5, *decoder_rt; 
+Tensor *decoder_rtmp1, *decoder_rtmp2, *decoder_rtmp3, *decoder_rtmp4, *decoder_rtmp5, *decoder_rt;
 Tensor *decoder_ztmp1, *decoder_ztmp2, *decoder_ztmp3, *decoder_ztmp4, *decoder_ztmp5, *decoder_zt;
 Tensor *decoder_ntmp1, *decoder_ntmp2, *decoder_ntmp3, *decoder_ntmp4, *decoder_ntmp5, *decoder_ntmp6, *decoder_nt;
 Tensor *decoder_htmp1, *decoder_htmp2, *decoder_htmp3, *decoder_ht;
@@ -106,8 +106,8 @@ int  top_one(Tensor *input);
 void log_softmax(Tensor *input, Tensor *output);
 
 /*
- * translator 
- * @brief : French to English translator. 
+ * translator
+ * @brief : French to English translator.
  *          Translate N sentences in French into N sentences in English
  *
  * @param [in1] input  : a tensor of size [N x MAX_LENGTH]. French tokens are stored in this tensor.
@@ -123,7 +123,7 @@ void translator(Tensor *input, Tensor *output, int N){
     &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
     0, MPI_COMM_WORLD);
 
-  // N sentences 
+  // N sentences
   for (int n = mpi_rank * N / 4; n < (mpi_rank + 1) * N / 4; ++n) {
     // Encoder init
     int input_length = 0;
@@ -135,11 +135,11 @@ void translator(Tensor *input, Tensor *output, int N){
 
     // Encoder
     for (int i=0; i<input_length; ++i) {
-      
+
       // Embedding
       int ei = input->buf[n * MAX_LENGTH + i];
       embedding(ei, eW_emb, encoder_embedded);
-      
+
       // GRU
       // r_t
       matvec(encoder_embedded, eW_ir, encoder_rtmp1);
@@ -147,16 +147,16 @@ void translator(Tensor *input, Tensor *output, int N){
       matvec(encoder_hidden, eW_hr, encoder_rtmp3);
       elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
       elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
-      elemwise_sigmoid(encoder_rtmp5, encoder_rt); 
-      
+      elemwise_sigmoid(encoder_rtmp5, encoder_rt);
+
       // z_t
       matvec(encoder_embedded, eW_iz, encoder_ztmp1);
       elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
       matvec(encoder_hidden, eW_hz, encoder_ztmp3);
       elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
       elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
-      elemwise_sigmoid(encoder_ztmp5, encoder_zt); 
-      
+      elemwise_sigmoid(encoder_ztmp5, encoder_zt);
+
       // n_t
       matvec(encoder_embedded, eW_in, encoder_ntmp1);
       elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
@@ -164,25 +164,25 @@ void translator(Tensor *input, Tensor *output, int N){
       elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
       elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
       elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
-      elemwise_tanh(encoder_ntmp6, encoder_nt); 
-      
+      elemwise_tanh(encoder_ntmp6, encoder_nt);
+
       // h_t
       elemwise_oneminus(encoder_zt, encoder_htmp1);
       elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
       elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
       elemwise_add(encoder_htmp2, encoder_htmp3, encoder_hidden);
-      
+
       copy_encoder_outputs(encoder_hidden, encoder_outputs, i);
     } // end Encoder loop
-    
+
     // Decoder init
     decoder_hidden = encoder_hidden;
-    decoder_input->buf[0] = SOS_token; 
+    decoder_input->buf[0] = SOS_token;
     int di = (int)decoder_input->buf[0];
-    
+
     // Decoder
     for (int i=0; i<MAX_LENGTH; ++i) {
-      
+
       // Embedding
       embedding(di, dW_emb, decoder_embedded);
 
@@ -194,7 +194,7 @@ void translator(Tensor *input, Tensor *output, int N){
       concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
       linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
       relu(decoder_attn_comb, decoder_relu);
-    
+
       // GRU
       // r_t
       matvec(decoder_relu, dW_ir, decoder_rtmp1);
@@ -202,16 +202,16 @@ void translator(Tensor *input, Tensor *output, int N){
       matvec(decoder_hidden, dW_hr, decoder_rtmp3);
       elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
       elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
-      elemwise_sigmoid(decoder_rtmp5, decoder_rt); 
-      
+      elemwise_sigmoid(decoder_rtmp5, decoder_rt);
+
       // z_t
       matvec(decoder_relu, dW_iz, decoder_ztmp1);
       elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
       matvec(decoder_hidden, dW_hz, decoder_ztmp3);
       elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
       elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
-      elemwise_sigmoid(decoder_ztmp5, decoder_zt); 
-      
+      elemwise_sigmoid(decoder_ztmp5, decoder_zt);
+
       // n_t
       matvec(decoder_relu, dW_in, decoder_ntmp1);
       elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
@@ -219,19 +219,19 @@ void translator(Tensor *input, Tensor *output, int N){
       elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
       elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
       elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
-      elemwise_tanh(decoder_ntmp6, decoder_nt); 
-      
+      elemwise_tanh(decoder_ntmp6, decoder_nt);
+
       // h_t
       elemwise_oneminus(decoder_zt, decoder_htmp1);
       elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
       elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
       elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
-      
+
       // Select output token
       linear(decoder_hidden, dW_out, db_out, decoder_out);
       log_softmax(decoder_out, decoder_logsoftmax);
       int topi= top_one(decoder_logsoftmax);
-        
+
       if (topi != EOS_token) {
         output->buf[n * MAX_LENGTH + i] = topi;
         di = topi;
@@ -251,7 +251,7 @@ void translator(Tensor *input, Tensor *output, int N){
 }
 
 /*
- * embedding 
+ * embedding
  * @brief : A simple lookup table that stores embeddings of a fixed dictionary and size.
  *
  * @param [in1] ei     : embedding index
@@ -260,14 +260,14 @@ void translator(Tensor *input, Tensor *output, int N){
  */
 void embedding(int ei, Tensor *weight, Tensor *output){
   int H_ = weight->shape[1];
-  
+
   for (int h=0; h<H_; ++h) {
     output->buf[h] = weight->buf[ei * H_ + h];
   }
 }
 
 /*
- * matvec 
+ * matvec
  * @brief : Perform a matrix-vector product of the matrix and the vector
  *
  * @param [in1] input  : a vector of size [K_]
@@ -277,7 +277,7 @@ void embedding(int ei, Tensor *weight, Tensor *output){
 void matvec(Tensor *input, Tensor *weight, Tensor *output) {
   int M_ = weight->shape[0];
   int K_ = weight->shape[1];
-  
+
   for (int m=0; m<M_; ++m) {
     float c = 0.0;
     for (int k=0; k<K_; ++k) {
@@ -299,7 +299,7 @@ void matvec(Tensor *input, Tensor *weight, Tensor *output) {
  */
 void elemwise_add(Tensor *input1, Tensor *input2, Tensor *output){
   int N_ = input1->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     output->buf[n] = input1->buf[n] + input2->buf[n];
   }
@@ -314,7 +314,7 @@ void elemwise_add(Tensor *input1, Tensor *input2, Tensor *output){
  */
 void elemwise_sigmoid(Tensor *input, Tensor *output) {
   int N_ = input->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     float x = input->buf[n];
     output->buf[n] = 1.0 / (1.0 + expf(-x));
@@ -330,7 +330,7 @@ void elemwise_sigmoid(Tensor *input, Tensor *output) {
  */
 void elemwise_tanh(Tensor *input, Tensor *output) {
   int N_ = input->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     float x = input->buf[n];
     output->buf[n] = tanhf(x);
@@ -347,7 +347,7 @@ void elemwise_tanh(Tensor *input, Tensor *output) {
  */
 void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
   int N_ = input1->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     float x1 = input1->buf[n];
     float x2 = input2->buf[n];
@@ -364,7 +364,7 @@ void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
  */
 void elemwise_oneminus(Tensor *input, Tensor *output) {
   int N_ = input->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     float x = input->buf[n];
     output->buf[n] = 1.0 - x;
@@ -381,7 +381,7 @@ void elemwise_oneminus(Tensor *input, Tensor *output) {
  */
 void copy_encoder_outputs(Tensor *input, Tensor *output, int i) {
   int N_ = input->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     output->buf[i * HIDDEN_SIZE + n] = input->buf[n];
   }
@@ -397,7 +397,7 @@ void copy_encoder_outputs(Tensor *input, Tensor *output, int i) {
  */
 void concat(Tensor *input1, Tensor *input2, Tensor *output) {
   int N_ = input1->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     output->buf[n] = input1->buf[n];
   }
@@ -418,11 +418,11 @@ void concat(Tensor *input1, Tensor *input2, Tensor *output) {
 void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output) {
   int K_ = weight->shape[1];
   int N_ = weight->shape[0];
-  
+
   for (int n=0; n<N_; ++n) {
     float c = bias->buf[n];
     for (int k=0; k<K_; ++k) {
-      c += input->buf[k] * weight->buf[n*K_ + k]; 
+      c += input->buf[k] * weight->buf[n*K_ + k];
     }
     output->buf[n] = c;
   }
@@ -430,7 +430,7 @@ void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output) {
 
 /*
  * softmax
- * @brief : Apply the Softmax function to an n-dimensional input Tensor rescaling them 
+ * @brief : Apply the Softmax function to an n-dimensional input Tensor rescaling them
  *          so that the elements of the n-dimensional output Tensor lie in the range [0,1] and sum to 1.
  *          softmax(xi) = exp(xi) / sum of exp(xi)
  *
@@ -440,7 +440,7 @@ void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output) {
 void softmax(Tensor *input, Tensor *output) {
   int N_ = input->shape[0];
   float sum = 0.0;
-  
+
   for (int n=0; n<N_; ++n) {
     sum += expf(input->buf[n]);
   }
@@ -453,7 +453,7 @@ void softmax(Tensor *input, Tensor *output) {
  * bmm
  * @brief : Perform a batch matrix-matrix product of matrices stored in input and weight.
  *          However, bmm performs matrix-vector product in this project.
- *          
+ *
  * @param [in1] input  : a vector of size [K_]
  * @param [in2] weight : a matrix of size [K_ x N_]
  * @param [out] output : a vector of size [N_]
@@ -461,7 +461,7 @@ void softmax(Tensor *input, Tensor *output) {
 void bmm(Tensor *input, Tensor *weight, Tensor *output) {
   int K_ = weight->shape[0];
   int N_ = weight->shape[1];
-  
+
   for (int n=0; n<N_; ++n) {
     float c = 0.0;
     for (int k=0; k<K_; ++k) {
@@ -474,13 +474,13 @@ void bmm(Tensor *input, Tensor *weight, Tensor *output) {
 /*
  * relu
  * @brief : Apply the rectified linear unit function element-wise. relu(x) = max(0,x)
- *          
+ *
  * @param [in1] input  : a vector of size [N_]
  * @param [out] output : a vector of size [N_]
  */
 void relu(Tensor *input, Tensor *output) {
   int N_ = input->num_elem();
-  
+
   for (int n=0; n<N_; ++n) {
     float x = input->buf[n];
     if (x < 0.0) output->buf[n] = 0.0;
@@ -491,7 +491,7 @@ void relu(Tensor *input, Tensor *output) {
 /*
  * top_one
  * @brief : Return the largest element of the given input tensor.
- *          
+ *
  * @param  [in1] input  : a vector of size [N_]
  * @return [ret] topi   : an index of the largest element
  */
@@ -499,9 +499,9 @@ int top_one(Tensor *input) {
   int N_ = input->num_elem();
   int topi = 0;
   float topval = input->buf[0];
-  
+
   for (int n=1; n<N_; ++n) {
-    float x = input->buf[n];    
+    float x = input->buf[n];
     if (x >= topval) {
       topi = n;
       topval = x;
@@ -513,14 +513,14 @@ int top_one(Tensor *input) {
 /*
  * log_softmax
  * @brief : Appli the log_softmax function to an input tensor. logsoftmax(x) = log(softmax(x))
- *          
+ *
  * @param [in1] input  : a vector of size [N_]
  * @param [out] output : a vector of size [N_]
  */
 void log_softmax(Tensor *input, Tensor *output) {
   int N_ = input->shape[0];
   float sum = 0.0;
-  
+
   for (int n=0; n<N_; ++n) {
     sum += expf(input->buf[n]);
   }
@@ -532,7 +532,7 @@ void log_softmax(Tensor *input, Tensor *output) {
 /*
  * initialize_translator
  * @brief : initialize translator. load the parameter binary file and store parameters into Tensors
- *          
+ *
  * @param [in1] parameter_fname  : the name of the binary file where parameters are stored
  */
 void initialize_translator(const char *parameter_fname, int N){
@@ -667,31 +667,31 @@ void finalize_translator(){
 
     // free parameters
     delete eW_emb;
-    delete eW_ir; 
-    delete eW_iz; 
-    delete eW_in; 
-    delete eW_hr; 
-    delete eW_hz; 
-    delete eW_hn; 
-    delete eb_ir; 
-    delete eb_iz; 
-    delete eb_in; 
-    delete eb_hr; 
-    delete eb_hz; 
-    delete eb_hn; 
+    delete eW_ir;
+    delete eW_iz;
+    delete eW_in;
+    delete eW_hr;
+    delete eW_hz;
+    delete eW_hn;
+    delete eb_ir;
+    delete eb_iz;
+    delete eb_in;
+    delete eb_hr;
+    delete eb_hz;
+    delete eb_hn;
     delete dW_emb;
-    delete dW_ir; 
-    delete dW_iz; 
-    delete dW_in; 
-    delete dW_hr; 
-    delete dW_hz; 
-    delete dW_hn; 
-    delete db_ir; 
-    delete db_iz; 
-    delete db_in; 
-    delete db_hr; 
-    delete db_hz; 
-    delete db_hn; 
+    delete dW_ir;
+    delete dW_iz;
+    delete dW_in;
+    delete dW_hr;
+    delete dW_hz;
+    delete dW_hn;
+    delete db_ir;
+    delete db_iz;
+    delete db_in;
+    delete db_hr;
+    delete db_hz;
+    delete db_hn;
     delete dW_attn;
     delete db_attn;
     delete dW_attn_comb;
@@ -709,12 +709,12 @@ void finalize_translator(){
     delete encoder_rtmp4;
     delete encoder_rtmp5;
     delete encoder_rt;
-    delete encoder_ztmp1; 
-    delete encoder_ztmp2; 
-    delete encoder_ztmp3; 
-    delete encoder_ztmp4; 
-    delete encoder_ztmp5; 
-    delete encoder_zt; 
+    delete encoder_ztmp1;
+    delete encoder_ztmp2;
+    delete encoder_ztmp3;
+    delete encoder_ztmp4;
+    delete encoder_ztmp5;
+    delete encoder_zt;
     delete encoder_ntmp1;
     delete encoder_ntmp2;
     delete encoder_ntmp3;
@@ -745,13 +745,13 @@ void finalize_translator(){
     delete decoder_rtmp3;
     delete decoder_rtmp4;
     delete decoder_rtmp5;
-    delete decoder_rt; 
+    delete decoder_rt;
     delete decoder_ztmp1;
     delete decoder_ztmp2;
     delete decoder_ztmp3;
     delete decoder_ztmp4;
     delete decoder_ztmp5;
-    delete decoder_zt; 
+    delete decoder_zt;
     delete decoder_ntmp1;
     delete decoder_ntmp2;
     delete decoder_ntmp3;
