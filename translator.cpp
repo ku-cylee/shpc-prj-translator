@@ -116,129 +116,138 @@ void log_softmax(Tensor *input, Tensor *output);
 void translator(Tensor *input, Tensor *output, int N){
   int mpi_rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-  if (mpi_rank == 0) {
+
+  int input_size_per_node = input->num_elem() / 4;
+  MPI_Scatter(
+    &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
+    &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
+    0, MPI_COMM_WORLD);
+
+  // N sentences 
+  for (int n = mpi_rank * N / 4; n < (mpi_rank + 1) * N / 4; ++n) {
+    // Encoder init
+    int input_length = 0;
+    for (int i=0; i<MAX_LENGTH; ++i, ++input_length) {
+      if (input->buf[n * MAX_LENGTH + i] == 0.0) break;
+    }
+    encoder_hidden->fill_zeros();
+    encoder_outputs->fill_zeros();
+
+    // Encoder
+    for (int i=0; i<input_length; ++i) {
+      
+      // Embedding
+      int ei = input->buf[n * MAX_LENGTH + i];
+      embedding(ei, eW_emb, encoder_embedded);
+      
+      // GRU
+      // r_t
+      matvec(encoder_embedded, eW_ir, encoder_rtmp1);
+      elemwise_add(encoder_rtmp1, eb_ir, encoder_rtmp2);
+      matvec(encoder_hidden, eW_hr, encoder_rtmp3);
+      elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
+      elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
+      elemwise_sigmoid(encoder_rtmp5, encoder_rt); 
+      
+      // z_t
+      matvec(encoder_embedded, eW_iz, encoder_ztmp1);
+      elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
+      matvec(encoder_hidden, eW_hz, encoder_ztmp3);
+      elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
+      elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
+      elemwise_sigmoid(encoder_ztmp5, encoder_zt); 
+      
+      // n_t
+      matvec(encoder_embedded, eW_in, encoder_ntmp1);
+      elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
+      matvec(encoder_hidden, eW_hn, encoder_ntmp3);
+      elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
+      elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
+      elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
+      elemwise_tanh(encoder_ntmp6, encoder_nt); 
+      
+      // h_t
+      elemwise_oneminus(encoder_zt, encoder_htmp1);
+      elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
+      elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
+      elemwise_add(encoder_htmp2, encoder_htmp3, encoder_hidden);
+      
+      copy_encoder_outputs(encoder_hidden, encoder_outputs, i);
+    } // end Encoder loop
     
-    // N sentences 
-    for (int n=0; n<N; ++n) {
+    // Decoder init
+    decoder_hidden = encoder_hidden;
+    decoder_input->buf[0] = SOS_token; 
+    int di = (int)decoder_input->buf[0];
+    
+    // Decoder
+    for (int i=0; i<MAX_LENGTH; ++i) {
       
-      // Encoder init
-      int input_length = 0;
-      for (int i=0; i<MAX_LENGTH; ++i, ++input_length) {
-        if (input->buf[n * MAX_LENGTH + i] == 0.0) break;
+      // Embedding
+      embedding(di, dW_emb, decoder_embedded);
+
+      // Attention
+      concat(decoder_embedded, decoder_hidden, decoder_embhid);
+      linear(decoder_embhid, dW_attn, db_attn, decoder_attn);
+      softmax(decoder_attn, decoder_attn_weights);
+      bmm(decoder_attn_weights, encoder_outputs, decoder_attn_applied);
+      concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
+      linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
+      relu(decoder_attn_comb, decoder_relu);
+    
+      // GRU
+      // r_t
+      matvec(decoder_relu, dW_ir, decoder_rtmp1);
+      elemwise_add(decoder_rtmp1, db_ir, decoder_rtmp2);
+      matvec(decoder_hidden, dW_hr, decoder_rtmp3);
+      elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
+      elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
+      elemwise_sigmoid(decoder_rtmp5, decoder_rt); 
+      
+      // z_t
+      matvec(decoder_relu, dW_iz, decoder_ztmp1);
+      elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
+      matvec(decoder_hidden, dW_hz, decoder_ztmp3);
+      elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
+      elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
+      elemwise_sigmoid(decoder_ztmp5, decoder_zt); 
+      
+      // n_t
+      matvec(decoder_relu, dW_in, decoder_ntmp1);
+      elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
+      matvec(decoder_hidden, dW_hn, decoder_ntmp3);
+      elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
+      elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
+      elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
+      elemwise_tanh(decoder_ntmp6, decoder_nt); 
+      
+      // h_t
+      elemwise_oneminus(decoder_zt, decoder_htmp1);
+      elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
+      elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
+      elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
+      
+      // Select output token
+      linear(decoder_hidden, dW_out, db_out, decoder_out);
+      log_softmax(decoder_out, decoder_logsoftmax);
+      int topi= top_one(decoder_logsoftmax);
+        
+      if (topi != EOS_token) {
+        output->buf[n * MAX_LENGTH + i] = topi;
+        di = topi;
       }
-      encoder_hidden->fill_zeros();
-      encoder_outputs->fill_zeros();
+      else {
+        output->buf[n * MAX_LENGTH + i] = EOS_token;
+        break;
+      }
+    } // end Decoder loop
+  } // end N input sentences loop
 
-      // Encoder
-      for (int i=0; i<input_length; ++i) {
-        
-        // Embedding
-        int ei = input->buf[n * MAX_LENGTH + i];
-        embedding(ei, eW_emb, encoder_embedded);
-        
-        // GRU
-        // r_t
-        matvec(encoder_embedded, eW_ir, encoder_rtmp1);
-        elemwise_add(encoder_rtmp1, eb_ir, encoder_rtmp2);
-        matvec(encoder_hidden, eW_hr, encoder_rtmp3);
-        elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
-        elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
-        elemwise_sigmoid(encoder_rtmp5, encoder_rt); 
-        
-        // z_t
-        matvec(encoder_embedded, eW_iz, encoder_ztmp1);
-        elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
-        matvec(encoder_hidden, eW_hz, encoder_ztmp3);
-        elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
-        elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
-        elemwise_sigmoid(encoder_ztmp5, encoder_zt); 
-       
-        // n_t
-        matvec(encoder_embedded, eW_in, encoder_ntmp1);
-        elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
-        matvec(encoder_hidden, eW_hn, encoder_ntmp3);
-        elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
-        elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
-        elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
-        elemwise_tanh(encoder_ntmp6, encoder_nt); 
-        
-        // h_t
-        elemwise_oneminus(encoder_zt, encoder_htmp1);
-        elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
-        elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
-        elemwise_add(encoder_htmp2, encoder_htmp3, encoder_hidden);
-        
-        copy_encoder_outputs(encoder_hidden, encoder_outputs, i);
-      } // end Encoder loop
-      
-      // Decoder init
-      decoder_hidden = encoder_hidden;
-      decoder_input->buf[0] = SOS_token; 
-      int di = (int)decoder_input->buf[0];
-     
-      // Decoder
-      for (int i=0; i<MAX_LENGTH; ++i) {
-        
-        // Embedding
-        embedding(di, dW_emb, decoder_embedded);
-
-        // Attention
-        concat(decoder_embedded, decoder_hidden, decoder_embhid);
-        linear(decoder_embhid, dW_attn, db_attn, decoder_attn);
-        softmax(decoder_attn, decoder_attn_weights);
-        bmm(decoder_attn_weights, encoder_outputs, decoder_attn_applied);
-        concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
-        linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
-        relu(decoder_attn_comb, decoder_relu);
-      
-        // GRU
-        // r_t
-        matvec(decoder_relu, dW_ir, decoder_rtmp1);
-        elemwise_add(decoder_rtmp1, db_ir, decoder_rtmp2);
-        matvec(decoder_hidden, dW_hr, decoder_rtmp3);
-        elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
-        elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
-        elemwise_sigmoid(decoder_rtmp5, decoder_rt); 
-        
-        // z_t
-        matvec(decoder_relu, dW_iz, decoder_ztmp1);
-        elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
-        matvec(decoder_hidden, dW_hz, decoder_ztmp3);
-        elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
-        elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
-        elemwise_sigmoid(decoder_ztmp5, decoder_zt); 
-        
-        // n_t
-        matvec(decoder_relu, dW_in, decoder_ntmp1);
-        elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
-        matvec(decoder_hidden, dW_hn, decoder_ntmp3);
-        elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
-        elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
-        elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
-        elemwise_tanh(decoder_ntmp6, decoder_nt); 
-        
-        // h_t
-        elemwise_oneminus(decoder_zt, decoder_htmp1);
-        elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
-        elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
-        elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
-       
-        // Select output token
-        linear(decoder_hidden, dW_out, db_out, decoder_out);
-        log_softmax(decoder_out, decoder_logsoftmax);
-        int topi= top_one(decoder_logsoftmax);
-         
-        if (topi != EOS_token) {
-          output->buf[n * MAX_LENGTH + i] = topi;
-          di = topi;
-        }
-        else {
-          output->buf[n * MAX_LENGTH + i] = EOS_token;
-          break;
-        }
-      } // end Decoder loop
-    } // end N input sentences loop
-  } // if mpi_rank == 0
+  int output_size_per_node = output->num_elem() / 4;
+  MPI_Gather(
+    &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
+    &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
+    0, MPI_COMM_WORLD);
 }
 
 /*
@@ -529,108 +538,121 @@ void log_softmax(Tensor *input, Tensor *output) {
 void initialize_translator(const char *parameter_fname, int N){
   int mpi_rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+  size_t parameter_binary_size = 0;
+  float *parameter = NULL;
+
   if (mpi_rank == 0) {
-    size_t parameter_binary_size = 0;
-    float *parameter = (float *) read_binary(parameter_fname, &parameter_binary_size);
-    
-    eW_emb = new Tensor({INPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET0);
-    eW_ir = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET1);
-    eW_iz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET2);
-    eW_in = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET3);
-    eW_hr = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET4);
-    eW_hz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET5);
-    eW_hn = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET6);
-    eb_ir = new Tensor({HIDDEN_SIZE}, parameter + OFFSET7);
-    eb_iz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET8);
-    eb_in = new Tensor({HIDDEN_SIZE}, parameter + OFFSET9);
-    eb_hr = new Tensor({HIDDEN_SIZE}, parameter + OFFSET10);
-    eb_hz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET11);
-    eb_hn = new Tensor({HIDDEN_SIZE}, parameter + OFFSET12);
-    dW_emb = new Tensor({OUTPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET13);
-    dW_ir = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET14);
-    dW_iz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET15);
-    dW_in = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET16);
-    dW_hr = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET17);
-    dW_hz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET18);
-    dW_hn = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET19);
-    db_ir = new Tensor({HIDDEN_SIZE}, parameter + OFFSET20);
-    db_iz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET21);
-    db_in = new Tensor({HIDDEN_SIZE}, parameter + OFFSET22);
-    db_hr = new Tensor({HIDDEN_SIZE}, parameter + OFFSET23);
-    db_hz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET24);
-    db_hn = new Tensor({HIDDEN_SIZE}, parameter + OFFSET25);
-    dW_attn = new Tensor({MAX_LENGTH, 2 * HIDDEN_SIZE}, parameter + OFFSET26);
-    db_attn = new Tensor({MAX_LENGTH}, parameter + OFFSET27);
-    dW_attn_comb = new Tensor({HIDDEN_SIZE, 2 * HIDDEN_SIZE}, parameter + OFFSET28);
-    db_attn_comb = new Tensor({HIDDEN_SIZE}, parameter + OFFSET29);
-    dW_out = new Tensor({OUTPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET30);
-    db_out = new Tensor({OUTPUT_VOCAB_SIZE}, parameter + OFFSET31);
-
-    encoder_hidden = new Tensor({HIDDEN_SIZE});
-    encoder_outputs = new Tensor({MAX_LENGTH, HIDDEN_SIZE});
-    encoder_embedded = new Tensor({HIDDEN_SIZE});
-    encoder_rtmp1 = new Tensor({HIDDEN_SIZE});
-    encoder_rtmp2 = new Tensor({HIDDEN_SIZE});
-    encoder_rtmp3 = new Tensor({HIDDEN_SIZE});
-    encoder_rtmp4 = new Tensor({HIDDEN_SIZE});
-    encoder_rtmp5 = new Tensor({HIDDEN_SIZE});
-    encoder_rt = new Tensor({HIDDEN_SIZE});
-    encoder_ztmp1 = new Tensor({HIDDEN_SIZE});
-    encoder_ztmp2 = new Tensor({HIDDEN_SIZE});
-    encoder_ztmp3 = new Tensor({HIDDEN_SIZE});
-    encoder_ztmp4 = new Tensor({HIDDEN_SIZE});
-    encoder_ztmp5 = new Tensor({HIDDEN_SIZE});
-    encoder_zt = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp1 = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp2 = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp3 = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp4 = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp5 = new Tensor({HIDDEN_SIZE});
-    encoder_ntmp6 = new Tensor({HIDDEN_SIZE});
-    encoder_nt = new Tensor({HIDDEN_SIZE});
-    encoder_htmp1 = new Tensor({HIDDEN_SIZE});
-    encoder_htmp2 = new Tensor({HIDDEN_SIZE});
-    encoder_htmp3 = new Tensor({HIDDEN_SIZE});
-    encoder_ht = new Tensor({HIDDEN_SIZE});
-
-    decoder_input = new Tensor({MAX_LENGTH});
-    decoder_hidden = new Tensor({HIDDEN_SIZE});
-    decoder_output = new Tensor({HIDDEN_SIZE});
-    decoded_words = new Tensor({MAX_LENGTH});
-    decoder_embedded = new Tensor({HIDDEN_SIZE});
-    decoder_embhid = new Tensor({2 * HIDDEN_SIZE});
-    decoder_attn = new Tensor({MAX_LENGTH});
-    decoder_attn_weights = new Tensor ({MAX_LENGTH});
-    decoder_attn_applied = new Tensor({HIDDEN_SIZE});
-    decoder_embattn = new Tensor({2 * HIDDEN_SIZE});
-    decoder_attn_comb = new Tensor({HIDDEN_SIZE});
-    decoder_relu = new Tensor({HIDDEN_SIZE});
-    decoder_rtmp1 = new Tensor({HIDDEN_SIZE});
-    decoder_rtmp2 = new Tensor({HIDDEN_SIZE});
-    decoder_rtmp3 = new Tensor({HIDDEN_SIZE});
-    decoder_rtmp4 = new Tensor({HIDDEN_SIZE});
-    decoder_rtmp5 = new Tensor({HIDDEN_SIZE});
-    decoder_rt = new Tensor({HIDDEN_SIZE});
-    decoder_ztmp1 = new Tensor({HIDDEN_SIZE});
-    decoder_ztmp2 = new Tensor({HIDDEN_SIZE});
-    decoder_ztmp3 = new Tensor({HIDDEN_SIZE});
-    decoder_ztmp4 = new Tensor({HIDDEN_SIZE});
-    decoder_ztmp5 = new Tensor({HIDDEN_SIZE});
-    decoder_zt = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp1 = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp2 = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp3 = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp4 = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp5 = new Tensor({HIDDEN_SIZE});
-    decoder_ntmp6 = new Tensor({HIDDEN_SIZE});
-    decoder_nt = new Tensor({HIDDEN_SIZE});
-    decoder_htmp1 = new Tensor({HIDDEN_SIZE});
-    decoder_htmp2 = new Tensor({HIDDEN_SIZE});
-    decoder_htmp3 = new Tensor({HIDDEN_SIZE});
-    decoder_ht = new Tensor({HIDDEN_SIZE});
-    decoder_out = new Tensor({OUTPUT_VOCAB_SIZE});
-    decoder_logsoftmax = new Tensor({OUTPUT_VOCAB_SIZE});
+    parameter = (float *) read_binary(parameter_fname, &parameter_binary_size);
   }
+
+  MPI_Bcast(&parameter_binary_size, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+
+  if (mpi_rank != 0) {
+    parameter = new float[parameter_binary_size];
+  }
+
+  MPI_Bcast(parameter, parameter_binary_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+  eW_emb = new Tensor({INPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET0);
+  eW_ir = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET1);
+  eW_iz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET2);
+  eW_in = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET3);
+  eW_hr = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET4);
+  eW_hz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET5);
+  eW_hn = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET6);
+  eb_ir = new Tensor({HIDDEN_SIZE}, parameter + OFFSET7);
+  eb_iz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET8);
+  eb_in = new Tensor({HIDDEN_SIZE}, parameter + OFFSET9);
+  eb_hr = new Tensor({HIDDEN_SIZE}, parameter + OFFSET10);
+  eb_hz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET11);
+  eb_hn = new Tensor({HIDDEN_SIZE}, parameter + OFFSET12);
+  dW_emb = new Tensor({OUTPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET13);
+  dW_ir = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET14);
+  dW_iz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET15);
+  dW_in = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET16);
+  dW_hr = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET17);
+  dW_hz = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET18);
+  dW_hn = new Tensor({HIDDEN_SIZE, HIDDEN_SIZE}, parameter + OFFSET19);
+  db_ir = new Tensor({HIDDEN_SIZE}, parameter + OFFSET20);
+  db_iz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET21);
+  db_in = new Tensor({HIDDEN_SIZE}, parameter + OFFSET22);
+  db_hr = new Tensor({HIDDEN_SIZE}, parameter + OFFSET23);
+  db_hz = new Tensor({HIDDEN_SIZE}, parameter + OFFSET24);
+  db_hn = new Tensor({HIDDEN_SIZE}, parameter + OFFSET25);
+  dW_attn = new Tensor({MAX_LENGTH, 2 * HIDDEN_SIZE}, parameter + OFFSET26);
+  db_attn = new Tensor({MAX_LENGTH}, parameter + OFFSET27);
+  dW_attn_comb = new Tensor({HIDDEN_SIZE, 2 * HIDDEN_SIZE}, parameter + OFFSET28);
+  db_attn_comb = new Tensor({HIDDEN_SIZE}, parameter + OFFSET29);
+  dW_out = new Tensor({OUTPUT_VOCAB_SIZE, HIDDEN_SIZE}, parameter + OFFSET30);
+  db_out = new Tensor({OUTPUT_VOCAB_SIZE}, parameter + OFFSET31);
+
+  encoder_hidden = new Tensor({HIDDEN_SIZE});
+  encoder_outputs = new Tensor({MAX_LENGTH, HIDDEN_SIZE});
+  encoder_embedded = new Tensor({HIDDEN_SIZE});
+  encoder_rtmp1 = new Tensor({HIDDEN_SIZE});
+  encoder_rtmp2 = new Tensor({HIDDEN_SIZE});
+  encoder_rtmp3 = new Tensor({HIDDEN_SIZE});
+  encoder_rtmp4 = new Tensor({HIDDEN_SIZE});
+  encoder_rtmp5 = new Tensor({HIDDEN_SIZE});
+  encoder_rt = new Tensor({HIDDEN_SIZE});
+  encoder_ztmp1 = new Tensor({HIDDEN_SIZE});
+  encoder_ztmp2 = new Tensor({HIDDEN_SIZE});
+  encoder_ztmp3 = new Tensor({HIDDEN_SIZE});
+  encoder_ztmp4 = new Tensor({HIDDEN_SIZE});
+  encoder_ztmp5 = new Tensor({HIDDEN_SIZE});
+  encoder_zt = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp1 = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp2 = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp3 = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp4 = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp5 = new Tensor({HIDDEN_SIZE});
+  encoder_ntmp6 = new Tensor({HIDDEN_SIZE});
+  encoder_nt = new Tensor({HIDDEN_SIZE});
+  encoder_htmp1 = new Tensor({HIDDEN_SIZE});
+  encoder_htmp2 = new Tensor({HIDDEN_SIZE});
+  encoder_htmp3 = new Tensor({HIDDEN_SIZE});
+  encoder_ht = new Tensor({HIDDEN_SIZE});
+
+  decoder_input = new Tensor({MAX_LENGTH});
+  decoder_hidden = new Tensor({HIDDEN_SIZE});
+  decoder_output = new Tensor({HIDDEN_SIZE});
+  decoded_words = new Tensor({MAX_LENGTH});
+  decoder_embedded = new Tensor({HIDDEN_SIZE});
+  decoder_embhid = new Tensor({2 * HIDDEN_SIZE});
+  decoder_attn = new Tensor({MAX_LENGTH});
+  decoder_attn_weights = new Tensor ({MAX_LENGTH});
+  decoder_attn_applied = new Tensor({HIDDEN_SIZE});
+  decoder_embattn = new Tensor({2 * HIDDEN_SIZE});
+  decoder_attn_comb = new Tensor({HIDDEN_SIZE});
+  decoder_relu = new Tensor({HIDDEN_SIZE});
+  decoder_rtmp1 = new Tensor({HIDDEN_SIZE});
+  decoder_rtmp2 = new Tensor({HIDDEN_SIZE});
+  decoder_rtmp3 = new Tensor({HIDDEN_SIZE});
+  decoder_rtmp4 = new Tensor({HIDDEN_SIZE});
+  decoder_rtmp5 = new Tensor({HIDDEN_SIZE});
+  decoder_rt = new Tensor({HIDDEN_SIZE});
+  decoder_ztmp1 = new Tensor({HIDDEN_SIZE});
+  decoder_ztmp2 = new Tensor({HIDDEN_SIZE});
+  decoder_ztmp3 = new Tensor({HIDDEN_SIZE});
+  decoder_ztmp4 = new Tensor({HIDDEN_SIZE});
+  decoder_ztmp5 = new Tensor({HIDDEN_SIZE});
+  decoder_zt = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp1 = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp2 = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp3 = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp4 = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp5 = new Tensor({HIDDEN_SIZE});
+  decoder_ntmp6 = new Tensor({HIDDEN_SIZE});
+  decoder_nt = new Tensor({HIDDEN_SIZE});
+  decoder_htmp1 = new Tensor({HIDDEN_SIZE});
+  decoder_htmp2 = new Tensor({HIDDEN_SIZE});
+  decoder_htmp3 = new Tensor({HIDDEN_SIZE});
+  decoder_ht = new Tensor({HIDDEN_SIZE});
+  decoder_out = new Tensor({OUTPUT_VOCAB_SIZE});
+  decoder_logsoftmax = new Tensor({OUTPUT_VOCAB_SIZE});
+
+  delete[] parameter;
 }
 
 /*
