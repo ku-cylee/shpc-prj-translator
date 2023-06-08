@@ -40,3 +40,6 @@
 generated_sentences.txt
 output.txt
 translator
+logs/
+tmp/
+.vscode/
