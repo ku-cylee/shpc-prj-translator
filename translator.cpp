@@ -114,17 +114,18 @@ void log_softmax(Tensor *input, Tensor *output);
  * @param [out] output : a tensor of size [N x MAX_LENGTH]. English tokens will be stored in this tensor.
  */
 void translator(Tensor *input, Tensor *output, int N){
-  int mpi_rank;
+  int mpi_rank, mpi_world_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &mpi_world_size);
 
-  int input_size_per_node = input->num_elem() / 4;
+  int input_size_per_node = input->num_elem() / mpi_world_size;
   MPI_Scatter(
     &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
     &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
     0, MPI_COMM_WORLD);
 
   // N sentences
-  for (int n = mpi_rank * N / 4; n < (mpi_rank + 1) * N / 4; ++n) {
+  for (int n = mpi_rank * N / mpi_world_size; n < (mpi_rank + 1) * N / mpi_world_size; ++n) {
     // Encoder init
     int input_length = 0;
     for (int i=0; i<MAX_LENGTH; ++i, ++input_length) {
@@ -243,7 +244,7 @@ void translator(Tensor *input, Tensor *output, int N){
     } // end Decoder loop
   } // end N input sentences loop
 
-  int output_size_per_node = output->num_elem() / 4;
+  int output_size_per_node = output->num_elem() / mpi_world_size;
   MPI_Gather(
     &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
     &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
