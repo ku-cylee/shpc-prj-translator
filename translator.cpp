@@ -3,7 +3,7 @@
 #include <mpi.h>
 #include <math.h>
 
-#define BATCH_SIZE  1
+#define BATCH_SIZE  32
 
 static int SOS_token = 0;
 static int EOS_token = 1;
@@ -98,7 +98,8 @@ void elemwise_sigmoid(Tensor *input, Tensor *output);
 void elemwise_tanh(Tensor *input, Tensor *output);
 void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output);
 void elemwise_oneminus(Tensor *input, Tensor *output);
-void copy_encoder_outputs(Tensor *input, Tensor *output, int i);
+void select(Tensor *input_true, Tensor *input_false, Tensor *output, int *choices);
+void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int i);
 void concat(Tensor *input1, Tensor *input2, Tensor *output);
 void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output);
 void softmax(Tensor *input, Tensor *output);
@@ -136,7 +137,7 @@ void translator(Tensor *input, Tensor *output, int N){
     encoder_hidden->fill_zeros();
     encoder_outputs->fill_zeros();
 
-    int terminate_encoder = 0;
+    int terminate_encoder = 0, running_encoders[BATCH_SIZE] = { 1 };
 
     // Encoder
     for (int i = 0; i < MAX_LENGTH && !terminate_encoder; ++i) {
@@ -177,13 +178,16 @@ void translator(Tensor *input, Tensor *output, int N){
       elemwise_oneminus(encoder_zt, encoder_htmp1);
       elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
       elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
-      elemwise_add(encoder_htmp2, encoder_htmp3, encoder_hidden);
+      elemwise_add(encoder_htmp2, encoder_htmp3, encoder_ht);
+      select(encoder_ht, encoder_hidden, encoder_hidden, running_encoders);
 
-      copy_encoder_outputs(encoder_hidden, encoder_outputs, i);
+      copy_encoder_outputs(encoder_hidden, encoder_outputs, running_encoders, i);
 
       terminate_encoder = 1;
       for (int b = 0; b < BATCH_SIZE; ++b) {
-        terminate_encoder = terminate_encoder && (input->buf[(n + b) * MAX_LENGTH + i + 1] == 0.0);
+        if (!running_encoders[b]) continue;
+        running_encoders[b] = input->buf[(n + b) * MAX_LENGTH + i + 1] != 0.0;
+        terminate_encoder = terminate_encoder && !running_encoders[b];
       }
     } // end Encoder loop
 
@@ -194,8 +198,7 @@ void translator(Tensor *input, Tensor *output, int N){
       decoder_embidx->buf[b] = SOS_token;
     }
 
-    int terminate_decoder = 0;
-    int terminated_decoders[BATCH_SIZE] = { 0 };
+    int terminate_decoder = 0, running_decoders[BATCH_SIZE] = { 1 };
 
     // Decoder
     for (int i = 0; i < MAX_LENGTH && !terminate_decoder; ++i) {
@@ -250,17 +253,17 @@ void translator(Tensor *input, Tensor *output, int N){
       top_one(decoder_logsoftmax, decoder_outputs);
 
       for (int b = 0; b < BATCH_SIZE; b++) {
-        if (terminated_decoders[b]) continue;
+        if (!running_decoders[b]) continue;
 
         int topi = decoder_outputs->buf[b];
         output->buf[(n + b) * MAX_LENGTH + i] = topi;
         decoder_embidx->buf[b] = topi;
-        if (topi == EOS_token) terminated_decoders[b] = 1;
+        if (topi == EOS_token) running_decoders[b] = 0;
       }
 
       terminate_decoder = 1;
       for (int b = 0; b < BATCH_SIZE; b++) {
-        terminate_decoder = terminate_decoder && terminated_decoders[b];
+        terminate_decoder = terminate_decoder && !running_decoders[b];
       }
     } // end Decoder loop
   } // end N input sentences loop
@@ -405,18 +408,41 @@ void elemwise_oneminus(Tensor *input, Tensor *output) {
 }
 
 /*
- * copy_encoder_outputs
- * @brief : Copy input vector into i-th row of the output matrix
- *
- * @param [in1] input  : a vectors of size  [B_ x N_]
- * @param [in2] i      : row index
- * @param [out] output : a matrices of size [B_ x MAX_LENGTH x N_]
+ * select
+ * @brief : Copies the data from i-th row from input_true if choices[i] is true, else from input_false
+ * 
+ * @param [in1] input_true  : a tensor of size [B_ x N_]
+ * @param [in2] input_false : a tensor of size [B_ x N_]
+ * @param [out] output      : a tensor of size [B_ x N_]
+ * @param [in3] choices     : an array of size [B_]
  */
-void copy_encoder_outputs(Tensor *input, Tensor *output, int i) {
+void select(Tensor *input_true, Tensor *input_false, Tensor *output, int *choices) {
+  int B_ = input_true->shape[0];
+  int N_ = input_true->shape[1];
+
+  for (int b = 0; b < B_; ++b) {
+    int choice = choices[b];
+    for (int n = b * N_; n < (b + 1) * N_; ++n) {
+      output->buf[n] = choice ? input_true->buf[n] : input_false->buf[n];
+    }
+  }
+}
+
+/*
+ * copy_encoder_outputs
+ * @brief : Copy input vector of chosen batch into i-th row of the output matrix
+ *
+ * @param [in1] input   : a vectors of size  [B_ x N_]
+ * @param [in2] i       : row index
+ * @param [in3] choices : an array of size   [B_]
+ * @param [out] output  : a matrices of size [B_ x MAX_LENGTH x N_]
+ */
+void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int i) {
   int B_ = input->shape[0];
   int N_ = input->shape[1];
 
   for (int b = 0; b < B_; ++b) {
+    if (!choices[b]) continue;
     for (int n = 0; n < N_; ++n) {
       output->buf[(b * MAX_LENGTH + i) * HIDDEN_SIZE + n] = input->buf[b * N_ + n];
     }
