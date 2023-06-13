@@ -137,7 +137,9 @@ void translator(Tensor *input, Tensor *output, int N){
     encoder_hidden->fill_zeros();
     encoder_outputs->fill_zeros();
 
-    int terminate_encoder = 0, running_encoders[BATCH_SIZE] = { 1 };
+    int terminate_encoder = 0, running_encoders[BATCH_SIZE];
+
+    for (int b = 0; b < BATCH_SIZE; ++b) running_encoders[b] = 1;
 
     // Encoder
     for (int i = 0; i < MAX_LENGTH && !terminate_encoder; ++i) {
@@ -198,7 +200,8 @@ void translator(Tensor *input, Tensor *output, int N){
       decoder_embidx->buf[b] = SOS_token;
     }
 
-    int terminate_decoder = 0, running_decoders[BATCH_SIZE] = { 1 };
+    int terminate_decoder = 0, running_decoders[BATCH_SIZE];
+    for (int b = 0; b < BATCH_SIZE; ++b) running_decoders[b] = 1;
 
     // Decoder
     for (int i = 0; i < MAX_LENGTH && !terminate_decoder; ++i) {
