@@ -90,6 +90,9 @@ Tensor *decoder_ntmp1, *decoder_ntmp2, *decoder_ntmp3, *decoder_ntmp4, *decoder_
 Tensor *decoder_htmp1, *decoder_htmp2, *decoder_htmp3, *decoder_ht;
 Tensor *decoder_out, *decoder_logsoftmax, *decoder_outputs;
 
+// Miscellaneous Variables
+int *running_batches;
+
 // Operations
 void embedding(Tensor *input, Tensor *weight, Tensor *output);
 void matvec(Tensor *input, Tensor *weight, Tensor *output);
@@ -137,9 +140,9 @@ void translator(Tensor *input, Tensor *output, int N){
     encoder_hidden->fill_zeros();
     encoder_outputs->fill_zeros();
 
-    int terminate_encoder = 0, running_encoders[BATCH_SIZE];
+    int terminate_encoder = 0;
 
-    for (int b = 0; b < BATCH_SIZE; ++b) running_encoders[b] = 1;
+    for (int b = 0; b < BATCH_SIZE; ++b) running_batches[b] = 1;
 
     // Encoder
     for (int i = 0; i < MAX_LENGTH && !terminate_encoder; ++i) {
@@ -181,15 +184,15 @@ void translator(Tensor *input, Tensor *output, int N){
       elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
       elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
       elemwise_add(encoder_htmp2, encoder_htmp3, encoder_ht);
-      select(encoder_ht, encoder_hidden, encoder_hidden, running_encoders);
+      select(encoder_ht, encoder_hidden, encoder_hidden, running_batches);
 
-      copy_encoder_outputs(encoder_hidden, encoder_outputs, running_encoders, i);
+      copy_encoder_outputs(encoder_hidden, encoder_outputs, running_batches, i);
 
       terminate_encoder = 1;
       for (int b = 0; b < BATCH_SIZE; ++b) {
-        if (!running_encoders[b]) continue;
-        running_encoders[b] = input->buf[(n + b) * MAX_LENGTH + i + 1] != 0.0;
-        terminate_encoder = terminate_encoder && !running_encoders[b];
+        if (!running_batches[b]) continue;
+        running_batches[b] = input->buf[(n + b) * MAX_LENGTH + i + 1] != 0.0;
+        terminate_encoder = terminate_encoder && !running_batches[b];
       }
     } // end Encoder loop
 
@@ -200,8 +203,8 @@ void translator(Tensor *input, Tensor *output, int N){
       decoder_embidx->buf[b] = SOS_token;
     }
 
-    int terminate_decoder = 0, running_decoders[BATCH_SIZE];
-    for (int b = 0; b < BATCH_SIZE; ++b) running_decoders[b] = 1;
+    int terminate_decoder = 0;
+    for (int b = 0; b < BATCH_SIZE; ++b) running_batches[b] = 1;
 
     // Decoder
     for (int i = 0; i < MAX_LENGTH && !terminate_decoder; ++i) {
@@ -256,17 +259,17 @@ void translator(Tensor *input, Tensor *output, int N){
       top_one(decoder_logsoftmax, decoder_outputs);
 
       for (int b = 0; b < BATCH_SIZE; b++) {
-        if (!running_decoders[b]) continue;
+        if (!running_batches[b]) continue;
 
         int topi = decoder_outputs->buf[b];
         output->buf[(n + b) * MAX_LENGTH + i] = topi;
         decoder_embidx->buf[b] = topi;
-        if (topi == EOS_token) running_decoders[b] = 0;
+        if (topi == EOS_token) running_batches[b] = 0;
       }
 
       terminate_decoder = 1;
       for (int b = 0; b < BATCH_SIZE; b++) {
-        terminate_decoder = terminate_decoder && !running_decoders[b];
+        terminate_decoder = terminate_decoder && !running_batches[b];
       }
     } // end Decoder loop
   } // end N input sentences loop
@@ -739,6 +742,8 @@ void initialize_translator(const char *parameter_fname, int N){
   decoder_logsoftmax = new Tensor({BATCH_SIZE, OUTPUT_VOCAB_SIZE});
   decoder_outputs = new Tensor({BATCH_SIZE});
 
+  running_batches = new int[BATCH_SIZE];
+
   delete[] parameter;
 }
 
@@ -749,107 +754,109 @@ void initialize_translator(const char *parameter_fname, int N){
 void finalize_translator(){
   int mpi_rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-  if (mpi_rank == 0) {
-    fprintf(stderr, "\n");
 
-    // free parameters
-    delete eW_emb;
-    delete eW_ir;
-    delete eW_iz;
-    delete eW_in;
-    delete eW_hr;
-    delete eW_hz;
-    delete eW_hn;
-    delete eb_ir;
-    delete eb_iz;
-    delete eb_in;
-    delete eb_hr;
-    delete eb_hz;
-    delete eb_hn;
-    delete dW_emb;
-    delete dW_ir;
-    delete dW_iz;
-    delete dW_in;
-    delete dW_hr;
-    delete dW_hz;
-    delete dW_hn;
-    delete db_ir;
-    delete db_iz;
-    delete db_in;
-    delete db_hr;
-    delete db_hz;
-    delete db_hn;
-    delete dW_attn;
-    delete db_attn;
-    delete dW_attn_comb;
-    delete db_attn_comb;
-    delete dW_out;
-    delete db_out;
+  fprintf(stderr, "\n");
 
-    // free encoder activations
-    delete encoder_embidx;
-    delete encoder_hidden;
-    delete encoder_outputs;
-    delete encoder_embedded;
-    delete encoder_rtmp1;
-    delete encoder_rtmp2;
-    delete encoder_rtmp3;
-    delete encoder_rtmp4;
-    delete encoder_rtmp5;
-    delete encoder_rt;
-    delete encoder_ztmp1;
-    delete encoder_ztmp2;
-    delete encoder_ztmp3;
-    delete encoder_ztmp4;
-    delete encoder_ztmp5;
-    delete encoder_zt;
-    delete encoder_ntmp1;
-    delete encoder_ntmp2;
-    delete encoder_ntmp3;
-    delete encoder_ntmp4;
-    delete encoder_ntmp5;
-    delete encoder_ntmp6;
-    delete encoder_nt;
-    delete encoder_htmp1;
-    delete encoder_htmp2;
-    delete encoder_htmp3;
-    delete encoder_ht;
+  // free parameters
+  delete eW_emb;
+  delete eW_ir;
+  delete eW_iz;
+  delete eW_in;
+  delete eW_hr;
+  delete eW_hz;
+  delete eW_hn;
+  delete eb_ir;
+  delete eb_iz;
+  delete eb_in;
+  delete eb_hr;
+  delete eb_hz;
+  delete eb_hn;
+  delete dW_emb;
+  delete dW_ir;
+  delete dW_iz;
+  delete dW_in;
+  delete dW_hr;
+  delete dW_hz;
+  delete dW_hn;
+  delete db_ir;
+  delete db_iz;
+  delete db_in;
+  delete db_hr;
+  delete db_hz;
+  delete db_hn;
+  delete dW_attn;
+  delete db_attn;
+  delete dW_attn_comb;
+  delete db_attn_comb;
+  delete dW_out;
+  delete db_out;
 
-    // free decoder activations
-    delete decoder_embidx;
-    delete decoder_embedded;
-    delete decoder_embhid;
-    delete decoder_attn;
-    delete decoder_attn_weights;
-    delete decoder_attn_applied;
-    delete decoder_embattn;
-    delete decoder_attn_comb;
-    delete decoder_relu;
-    delete decoder_rtmp1;
-    delete decoder_rtmp2;
-    delete decoder_rtmp3;
-    delete decoder_rtmp4;
-    delete decoder_rtmp5;
-    delete decoder_rt;
-    delete decoder_ztmp1;
-    delete decoder_ztmp2;
-    delete decoder_ztmp3;
-    delete decoder_ztmp4;
-    delete decoder_ztmp5;
-    delete decoder_zt;
-    delete decoder_ntmp1;
-    delete decoder_ntmp2;
-    delete decoder_ntmp3;
-    delete decoder_ntmp4;
-    delete decoder_ntmp5;
-    delete decoder_ntmp6;
-    delete decoder_nt;
-    delete decoder_htmp1;
-    delete decoder_htmp2;
-    delete decoder_htmp3;
-    delete decoder_ht;
-    delete decoder_out;
-    delete decoder_logsoftmax;
-    delete decoder_outputs;
-  }
+  // free encoder activations
+  delete encoder_embidx;
+  delete encoder_hidden;
+  delete encoder_outputs;
+  delete encoder_embedded;
+  delete encoder_rtmp1;
+  delete encoder_rtmp2;
+  delete encoder_rtmp3;
+  delete encoder_rtmp4;
+  delete encoder_rtmp5;
+  delete encoder_rt;
+  delete encoder_ztmp1;
+  delete encoder_ztmp2;
+  delete encoder_ztmp3;
+  delete encoder_ztmp4;
+  delete encoder_ztmp5;
+  delete encoder_zt;
+  delete encoder_ntmp1;
+  delete encoder_ntmp2;
+  delete encoder_ntmp3;
+  delete encoder_ntmp4;
+  delete encoder_ntmp5;
+  delete encoder_ntmp6;
+  delete encoder_nt;
+  delete encoder_htmp1;
+  delete encoder_htmp2;
+  delete encoder_htmp3;
+  delete encoder_ht;
+
+  // free decoder activations
+  delete decoder_embidx;
+  delete decoder_embedded;
+  delete decoder_embhid;
+  delete decoder_attn;
+  delete decoder_attn_weights;
+  delete decoder_attn_applied;
+  delete decoder_embattn;
+  delete decoder_attn_comb;
+  delete decoder_relu;
+  delete decoder_rtmp1;
+  delete decoder_rtmp2;
+  delete decoder_rtmp3;
+  delete decoder_rtmp4;
+  delete decoder_rtmp5;
+  delete decoder_rt;
+  delete decoder_ztmp1;
+  delete decoder_ztmp2;
+  delete decoder_ztmp3;
+  delete decoder_ztmp4;
+  delete decoder_ztmp5;
+  delete decoder_zt;
+  delete decoder_ntmp1;
+  delete decoder_ntmp2;
+  delete decoder_ntmp3;
+  delete decoder_ntmp4;
+  delete decoder_ntmp5;
+  delete decoder_ntmp6;
+  delete decoder_nt;
+  delete decoder_htmp1;
+  delete decoder_htmp2;
+  delete decoder_htmp3;
+  delete decoder_ht;
+  delete decoder_out;
+  delete decoder_logsoftmax;
+  delete decoder_outputs;
+
+  // free misc. variables
+  delete running_batches;
 }
