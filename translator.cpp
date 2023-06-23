@@ -119,8 +119,8 @@ void init_encoder(Tensor *_hidden, Tensor *_outputs);
 void init_decoder(Tensor *_embidx);
 
 // Operations
-void check_encoder_termination(float *input, int *runnings, int *word_idx);
-void fetch_words(float *input, Tensor *output, int *word_idx);
+void check_encoder_termination(float *input, int *runnings, int word_idx);
+void fetch_words(float *input, Tensor *output, int word_idx);
 void embedding(Tensor *input, Tensor *weight, Tensor *output);
 void matvec(Tensor *input, Tensor *weight, Tensor *output);
 void elemwise_add(Tensor *input1, Tensor *input2, Tensor *output);
@@ -129,7 +129,7 @@ void elemwise_tanh(Tensor *input, Tensor *output);
 void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output);
 void elemwise_oneminus(Tensor *input, Tensor *output);
 void select(Tensor *input_true, Tensor *input_false, Tensor *output, int *choices);
-void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int *word_idx);
+void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int word_idx);
 void concat(Tensor *input1, Tensor *input2, Tensor *output);
 void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output);
 void softmax(Tensor *input, Tensor *output);
@@ -137,7 +137,7 @@ void bmm(Tensor *input, Tensor *weight, Tensor *output);
 void relu(Tensor *input, Tensor *output);
 void top_one(Tensor *input, Tensor *output);
 void log_softmax(Tensor *input, Tensor *output);
-void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, int *runnings, int *word_idx);
+void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, int *runnings, int word_idx);
 
 __global__ void init_weights(
   Tensor *_eW_emb,
@@ -249,118 +249,114 @@ void translator(Tensor *input, Tensor *output, int N){
     sizeof(float) * input_size_per_node,
     cudaMemcpyHostToDevice);
 
-    // Encoder init
-    init_encoder(encoder_hidden, encoder_outputs);
-    init_running_batches(running_batches);
+  // Encoder init
+  init_encoder(encoder_hidden, encoder_outputs);
+  init_running_batches(running_batches);
 
-    int *dev_i;
-    cudaMalloc((void **)&dev_i, sizeof(int));
+  // Encoder
+  for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
 
-    // Encoder
-    for (int i = 0; i < MAX_LENGTH; ++i) {
-      cudaMemcpy(dev_i, &i, sizeof(int), cudaMemcpyHostToDevice);
-      check_encoder_termination(in_buf, running_batches, dev_i);
+    check_encoder_termination(in_buf, running_batches, work_idx);
 
-      fetch_words(in_buf, encoder_embidx, dev_i);
-      embedding(encoder_embidx, eW_emb, encoder_embedded);
+    fetch_words(in_buf, encoder_embidx, work_idx);
+    embedding(encoder_embidx, eW_emb, encoder_embedded);
 
-      // GRU
-      // r_t
-      matvec(encoder_embedded, eW_ir, encoder_rtmp1);
-      elemwise_add(encoder_rtmp1, eb_ir, encoder_rtmp2);
-      matvec(encoder_hidden, eW_hr, encoder_rtmp3);
-      elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
-      elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
-      elemwise_sigmoid(encoder_rtmp5, encoder_rt);
+    // GRU
+    // r_t
+    matvec(encoder_embedded, eW_ir, encoder_rtmp1);
+    elemwise_add(encoder_rtmp1, eb_ir, encoder_rtmp2);
+    matvec(encoder_hidden, eW_hr, encoder_rtmp3);
+    elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
+    elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
+    elemwise_sigmoid(encoder_rtmp5, encoder_rt);
 
-      // z_t
-      matvec(encoder_embedded, eW_iz, encoder_ztmp1);
-      elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
-      matvec(encoder_hidden, eW_hz, encoder_ztmp3);
-      elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
-      elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
-      elemwise_sigmoid(encoder_ztmp5, encoder_zt);
+    // z_t
+    matvec(encoder_embedded, eW_iz, encoder_ztmp1);
+    elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
+    matvec(encoder_hidden, eW_hz, encoder_ztmp3);
+    elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
+    elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
+    elemwise_sigmoid(encoder_ztmp5, encoder_zt);
 
-      // n_t
-      matvec(encoder_embedded, eW_in, encoder_ntmp1);
-      elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
-      matvec(encoder_hidden, eW_hn, encoder_ntmp3);
-      elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
-      elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
-      elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
-      elemwise_tanh(encoder_ntmp6, encoder_nt);
+    // n_t
+    matvec(encoder_embedded, eW_in, encoder_ntmp1);
+    elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
+    matvec(encoder_hidden, eW_hn, encoder_ntmp3);
+    elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
+    elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
+    elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
+    elemwise_tanh(encoder_ntmp6, encoder_nt);
 
-      // h_t
-      elemwise_oneminus(encoder_zt, encoder_htmp1);
-      elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
-      elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
-      elemwise_add(encoder_htmp2, encoder_htmp3, encoder_ht);
-      select(encoder_ht, encoder_hidden, encoder_hidden, running_batches);
+    // h_t
+    elemwise_oneminus(encoder_zt, encoder_htmp1);
+    elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
+    elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
+    elemwise_add(encoder_htmp2, encoder_htmp3, encoder_ht);
+    select(encoder_ht, encoder_hidden, encoder_hidden, running_batches);
 
-      copy_encoder_outputs(encoder_hidden, encoder_outputs, running_batches, dev_i);
-    } // end Encoder loop
+    copy_encoder_outputs(encoder_hidden, encoder_outputs, running_batches, work_idx);
+  } // end Encoder loop
 
-    // Decoder init
-    decoder_hidden = encoder_hidden;
+  // Decoder init
+  decoder_hidden = encoder_hidden;
 
-    init_decoder(decoder_embidx);
-    init_running_batches(running_batches);
+  init_decoder(decoder_embidx);
+  init_running_batches(running_batches);
 
-    // Decoder
-    for (int i = 0; i < MAX_LENGTH; ++i) {
-      cudaMemcpy(dev_i, &i, sizeof(int), cudaMemcpyHostToDevice);
+  // Decoder
+  for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
 
-      // Embedding
-      embedding(decoder_embidx, dW_emb, decoder_embedded);
+    // Embedding
+    embedding(decoder_embidx, dW_emb, decoder_embedded);
 
-      // Attention
-      concat(decoder_embedded, decoder_hidden, decoder_embhid);
-      linear(decoder_embhid, dW_attn, db_attn, decoder_attn);
-      softmax(decoder_attn, decoder_attn_weights);
-      bmm(decoder_attn_weights, encoder_outputs, decoder_attn_applied);
-      concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
-      linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
-      relu(decoder_attn_comb, decoder_relu);
+    // Attention
+    concat(decoder_embedded, decoder_hidden, decoder_embhid);
+    linear(decoder_embhid, dW_attn, db_attn, decoder_attn);
+    softmax(decoder_attn, decoder_attn_weights);
+    bmm(decoder_attn_weights, encoder_outputs, decoder_attn_applied);
+    concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
+    linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
+    relu(decoder_attn_comb, decoder_relu);
 
-      // GRU
-      // r_t
-      matvec(decoder_relu, dW_ir, decoder_rtmp1);
-      elemwise_add(decoder_rtmp1, db_ir, decoder_rtmp2);
-      matvec(decoder_hidden, dW_hr, decoder_rtmp3);
-      elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
-      elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
-      elemwise_sigmoid(decoder_rtmp5, decoder_rt);
+    // GRU
+    // r_t
+    matvec(decoder_relu, dW_ir, decoder_rtmp1);
+    elemwise_add(decoder_rtmp1, db_ir, decoder_rtmp2);
+    matvec(decoder_hidden, dW_hr, decoder_rtmp3);
+    elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
+    elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
+    elemwise_sigmoid(decoder_rtmp5, decoder_rt);
 
-      // z_t
-      matvec(decoder_relu, dW_iz, decoder_ztmp1);
-      elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
-      matvec(decoder_hidden, dW_hz, decoder_ztmp3);
-      elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
-      elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
-      elemwise_sigmoid(decoder_ztmp5, decoder_zt);
+    // z_t
+    matvec(decoder_relu, dW_iz, decoder_ztmp1);
+    elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
+    matvec(decoder_hidden, dW_hz, decoder_ztmp3);
+    elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
+    elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
+    elemwise_sigmoid(decoder_ztmp5, decoder_zt);
 
-      // n_t
-      matvec(decoder_relu, dW_in, decoder_ntmp1);
-      elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
-      matvec(decoder_hidden, dW_hn, decoder_ntmp3);
-      elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
-      elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
-      elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
-      elemwise_tanh(decoder_ntmp6, decoder_nt);
+    // n_t
+    matvec(decoder_relu, dW_in, decoder_ntmp1);
+    elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
+    matvec(decoder_hidden, dW_hn, decoder_ntmp3);
+    elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
+    elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
+    elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
+    elemwise_tanh(decoder_ntmp6, decoder_nt);
 
-      // h_t
-      elemwise_oneminus(decoder_zt, decoder_htmp1);
-      elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
-      elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
-      elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
+    // h_t
+    elemwise_oneminus(decoder_zt, decoder_htmp1);
+    elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
+    elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
+    elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
 
-      // Select output token
-      linear(decoder_hidden, dW_out, db_out, decoder_out);
-      log_softmax(decoder_out, decoder_logsoftmax);
-      top_one(decoder_logsoftmax, decoder_outputs);
+    // Select output token
+    linear(decoder_hidden, dW_out, db_out, decoder_out);
+    log_softmax(decoder_out, decoder_logsoftmax);
+    top_one(decoder_logsoftmax, decoder_outputs);
 
-      check_decoder_termination(decoder_outputs, decoder_embidx, out_buf, running_batches, dev_i);
-    } // end Decoder loop
+    check_decoder_termination(decoder_outputs, decoder_embidx, out_buf, running_batches, work_idx);
+  } // end Decoder loop
 
   int output_size_per_node = output->num_elem() / mpi_world_size;
 
@@ -442,26 +438,26 @@ void init_decoder(Tensor *_embidx) {
   _init_decoder<<<gridDim, blockDim>>>(_embidx);
 }
 
-__global__ void _check_encoder_termination(float *input, int *runnings, int *word_idx, int batch_size) {
+__global__ void _check_encoder_termination(float *input, int *runnings, int word_idx, int batch_size) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (b >= batch_size || !runnings[b]) return;
 
-  runnings[b] = input[b * MAX_LENGTH + *word_idx] != 0.0;
+  runnings[b] = input[b * MAX_LENGTH + word_idx] != 0.0;
 }
 
-void check_encoder_termination(float *input, int *runnings, int *word_idx) {
+void check_encoder_termination(float *input, int *runnings, int word_idx) {
   dim3 blockDim(32);
   dim3 gridDim(BATCH_SIZE / blockDim.x);
   _check_encoder_termination<<<gridDim, blockDim>>>(input, runnings, word_idx, BATCH_SIZE);
 }
 
-__global__ void _fetch_words(float *input, Tensor *output, int *word_idx, int batch_size) {
+__global__ void _fetch_words(float *input, Tensor *output, int word_idx, int batch_size) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
-  if (b < batch_size) output->buf[b] = input[b * MAX_LENGTH + *word_idx];
+  if (b < batch_size) output->buf[b] = input[b * MAX_LENGTH + word_idx];
 }
 
-void fetch_words(float *input, Tensor *output, int *word_idx) {
+void fetch_words(float *input, Tensor *output, int word_idx) {
   dim3 blockDim(32);
   dim3 gridDim((BATCH_SIZE + blockDim.x - 1) / blockDim.x);
   _fetch_words<<<gridDim, blockDim>>>(input, output, word_idx, BATCH_SIZE);
@@ -702,7 +698,7 @@ void select(Tensor *input_true, Tensor *input_false, Tensor *output, int *choice
  * @param [in3] choices : an array of size   [B_]
  * @param [out] output  : a matrices of size [B_ x MAX_LENGTH x N_]
  */
-__global__ void _copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int *i) {
+__global__ void _copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int word_idx) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
   int n = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -712,15 +708,15 @@ __global__ void _copy_encoder_outputs(Tensor *input, Tensor *output, int *choice
   if (b >= B_ || n >= N_) return;
 
   if (!choices[b]) return;
-  output->buf[(b * MAX_LENGTH + (*i)) * N_ + n] = input->buf[b * N_ + n];
+  output->buf[(b * MAX_LENGTH + word_idx) * N_ + n] = input->buf[b * N_ + n];
 }
 
-void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int *i) {
+void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int word_idx) {
   dim3 blockDim(32, 32);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (input->shape[1] + blockDim.y - 1) / blockDim.y);
-  _copy_encoder_outputs<<<gridDim, blockDim>>>(input, output, choices, i);
+  _copy_encoder_outputs<<<gridDim, blockDim>>>(input, output, choices, word_idx);
 }
 
 /*
@@ -947,19 +943,19 @@ void log_softmax(Tensor *input, Tensor *output) {
   _log_softmax<<<gridDim, blockDim>>>(input, output);
 }
 
-__global__ void _check_decoder_termination(Tensor *outputs, Tensor *embidx, float *output, int *runnings, int *word_idx) {
+__global__ void _check_decoder_termination(Tensor *outputs, Tensor *embidx, float *output, int *runnings, int word_idx) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (b >= outputs->shape[0] || !runnings[b]) return;
 
   int topi = outputs->buf[b];
-  output[b * MAX_LENGTH + *word_idx] = topi;
+  output[b * MAX_LENGTH + word_idx] = topi;
   embidx->buf[b] = topi;
 
   if (topi == EOS_TOKEN) runnings[b] = 0;
 }
 
-void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, int *runnings, int *word_idx) {
+void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, int *runnings, int word_idx) {
   dim3 blockDim(32);
   dim3 gridDim(BATCH_SIZE / blockDim.x);
   _check_decoder_termination<<<gridDim, blockDim>>>(outputs, embidx, out_buf, runnings, word_idx);
