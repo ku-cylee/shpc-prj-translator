@@ -512,9 +512,7 @@ __global__ void _matvec(Tensor *input, Tensor *weight, Tensor *output) {
 
   float c = 0.0;
   for (int k = 0; k < K_; ++k) {
-    float w = weight->buf[m * K_ + k];
-    float i = input->buf[b * K_ + k];
-    c += w * i;
+    c += weight->buf[m * K_ + k] * input->buf[b * K_ + k];
   }
   output->buf[b * M_ + m] = c;
 }
@@ -570,8 +568,7 @@ __global__ void _elemwise_sigmoid(Tensor *input, Tensor *output) {
 
   if (n >= N_) return;
 
-  float x = input->buf[n];
-  output->buf[n] = 1.0 / (1.0 + expf(-x));
+  output->buf[n] = 1.0 / (1.0 + expf(-input->buf[n]));
 }
 
 void elemwise_sigmoid(Tensor *input, Tensor *output) {
@@ -595,8 +592,7 @@ __global__ void _elemwise_tanh(Tensor *input, Tensor *output) {
 
   if (n >= N_) return;
 
-  float x = input->buf[n];
-  output->buf[n] = tanhf(x);
+  output->buf[n] = tanhf(input->buf[n]);
 }
 
 void elemwise_tanh(Tensor *input, Tensor *output) {
@@ -621,9 +617,7 @@ __global__ void _elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
 
   if (n >= N_) return;
 
-  float x1 = input1->buf[n];
-  float x2 = input2->buf[n];
-  output->buf[n] = x1 * x2;
+  output->buf[n] = input1->buf[n] * input2->buf[n];
 }
 
 void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
@@ -647,8 +641,7 @@ __global__ void _elemwise_oneminus(Tensor *input, Tensor *output) {
 
   if (n >= N_) return;
 
-  float x = input->buf[n];
-  output->buf[n] = 1.0 - x;
+  output->buf[n] = 1.0 - input->buf[n];
 }
 
 void elemwise_oneminus(Tensor *input, Tensor *output) {
@@ -863,8 +856,7 @@ __global__ void _relu(Tensor *input, Tensor *output) {
   if (n >= N_) return;
 
   float x = input->buf[n];
-  if (x < 0.0) output->buf[n] = 0.0;
-  else output->buf[n] = x;
+  output->buf[n] = x < 0.0 ? 0.0 : x;
 }
 
 void relu(Tensor *input, Tensor *output) {
