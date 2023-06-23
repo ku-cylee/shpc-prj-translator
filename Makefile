@@ -20,5 +20,8 @@ $(TARGET): $(OBJECTS)
 %.o: %.cu
 	$(CUX) $(CUDA_CFLAGS) -c -o $@ $^
 
+translator.o: translator.cpp
+	$(CUX) $(CUDA_CFLAGS) -c -o $@ -x cu $^
+
 clean:
 	rm -rf $(TARGET) $(OBJECTS)

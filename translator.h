@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <cuda_runtime.h>
 
 using namespace std;
 #define MAX_LENGTH (10)
@@ -44,7 +45,8 @@ struct Tensor {
   Tensor(std::vector<int> shape_);
   Tensor(std::vector<int> shape_, float *buf_);
   ~Tensor();
-  int num_elem();
+  void init_cuda(std::vector<int> shape_);
+  __host__ __device__ int num_elem();
   void fill_zeros();
 
   float *buf = nullptr;
