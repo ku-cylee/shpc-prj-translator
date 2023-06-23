@@ -4,8 +4,10 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
-#define SOS_TOKEN     0
-#define EOS_TOKEN     1
+#define SOS_TOKEN        0
+#define EOS_TOKEN        1
+
+#define BLOCK_SIZE       8
 
 #define CUDA_MALLOC(TENSOR_NAME, ...)                           \
   cudaMallocManaged((void **)&TENSOR_NAME, sizeof(Tensor));     \
@@ -384,7 +386,7 @@ __global__ void _init_buffers(float *_in_buf, float *_out_buf, int batch_size) {
 }
 
 void init_buffers(float *_in_buf, float *_out_buf) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (BATCH_SIZE + blockDim.x - 1) / blockDim.x,
     (MAX_LENGTH + blockDim.y - 1) / blockDim.y);
@@ -397,7 +399,7 @@ __global__ void _init_running_batches(int *runnings, int batch_size) {
 }
 
 void init_running_batches(int *runnings) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim((BATCH_SIZE + blockDim.x - 1) / blockDim.x);
   _init_running_batches<<<gridDim, blockDim>>>(runnings, BATCH_SIZE);
 }
@@ -417,7 +419,7 @@ __global__ void _init_encoder(Tensor *_hidden, Tensor *_outputs) {
 }
 
 void init_encoder(Tensor *_hidden, Tensor *_outputs) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (_outputs->shape[0] + blockDim.x - 1) / blockDim.x,
     (_outputs->shape[2] + blockDim.y - 1) / blockDim.y);
@@ -433,7 +435,7 @@ __global__ void _init_decoder(Tensor *_embidx) {
 }
 
 void init_decoder(Tensor *_embidx) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim((_embidx->shape[0] + blockDim.x - 1) / blockDim.x);
   _init_decoder<<<gridDim, blockDim>>>(_embidx);
 }
@@ -447,7 +449,7 @@ __global__ void _check_encoder_termination(float *input, int *runnings, int word
 }
 
 void check_encoder_termination(float *input, int *runnings, int word_idx) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(BATCH_SIZE / blockDim.x);
   _check_encoder_termination<<<gridDim, blockDim>>>(input, runnings, word_idx, BATCH_SIZE);
 }
@@ -458,7 +460,7 @@ __global__ void _fetch_words(float *input, Tensor *output, int word_idx, int bat
 }
 
 void fetch_words(float *input, Tensor *output, int word_idx) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim((BATCH_SIZE + blockDim.x - 1) / blockDim.x);
   _fetch_words<<<gridDim, blockDim>>>(input, output, word_idx, BATCH_SIZE);
 }
@@ -485,7 +487,7 @@ __global__ void _embedding(Tensor *input, Tensor *weight, Tensor *output){
 }
 
 void embedding(Tensor *input, Tensor *weight, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (weight->shape[1] + blockDim.y - 1) / blockDim.y);
@@ -518,7 +520,7 @@ __global__ void _matvec(Tensor *input, Tensor *weight, Tensor *output) {
 }
 
 void matvec(Tensor *input, Tensor *weight, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (weight->shape[0] + blockDim.y - 1) / blockDim.y);
@@ -547,7 +549,7 @@ __global__ void _elemwise_add(Tensor *input1, Tensor *input2, Tensor *output){
 }
 
 void elemwise_add(Tensor *input1, Tensor *input2, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input1->shape[0] + blockDim.x - 1) / blockDim.x,
     (input1->shape[1] + blockDim.y - 1) / blockDim.y);
@@ -572,7 +574,7 @@ __global__ void _elemwise_sigmoid(Tensor *input, Tensor *output) {
 }
 
 void elemwise_sigmoid(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->num_elem() + blockDim.x - 1) / blockDim.x);
   _elemwise_sigmoid<<<gridDim, blockDim>>>(input, output);
@@ -596,7 +598,7 @@ __global__ void _elemwise_tanh(Tensor *input, Tensor *output) {
 }
 
 void elemwise_tanh(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->num_elem() + blockDim.x - 1) / blockDim.x);
   _elemwise_tanh<<<gridDim, blockDim>>>(input, output);
@@ -621,7 +623,7 @@ __global__ void _elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
 }
 
 void elemwise_mult(Tensor *input1, Tensor *input2, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input1->num_elem() + blockDim.x - 1) / blockDim.x);
   _elemwise_mult<<<gridDim, blockDim>>>(input1, input2, output);
@@ -645,7 +647,7 @@ __global__ void _elemwise_oneminus(Tensor *input, Tensor *output) {
 }
 
 void elemwise_oneminus(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->num_elem() + blockDim.x - 1) / blockDim.x);
   _elemwise_oneminus<<<gridDim, blockDim>>>(input, output);
@@ -675,7 +677,7 @@ __global__ void _select(Tensor *input_true, Tensor *input_false, Tensor *output,
 }
 
 void select(Tensor *input_true, Tensor *input_false, Tensor *output, int *choices) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input_true->shape[0] + blockDim.x - 1) / blockDim.x,
     (input_true->shape[1] + blockDim.y - 1) / blockDim.y);
@@ -705,7 +707,7 @@ __global__ void _copy_encoder_outputs(Tensor *input, Tensor *output, int *choice
 }
 
 void copy_encoder_outputs(Tensor *input, Tensor *output, int *choices, int word_idx) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (input->shape[1] + blockDim.y - 1) / blockDim.y);
@@ -733,7 +735,7 @@ __global__ void _concat(Tensor *input1, Tensor *input2, Tensor *output) {
 }
 
 void concat(Tensor *input1, Tensor *input2, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input1->shape[0] + blockDim.x - 1) / blockDim.x,
     (2 * input1->shape[1] + blockDim.y - 1) / blockDim.y);
@@ -767,7 +769,7 @@ __global__ void _linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *out
 }
 
 void linear(Tensor *input, Tensor *weight, Tensor *bias, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (weight->shape[0] + blockDim.y - 1) / blockDim.y);
@@ -801,7 +803,7 @@ __global__ void _softmax(Tensor *input, Tensor *output) {
 }
 
 void softmax(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->num_elem() + blockDim.x - 1) / blockDim.x);
   _softmax<<<gridDim, blockDim>>>(input, output);
@@ -834,7 +836,7 @@ __global__ void _bmm(Tensor *input, Tensor *weight, Tensor *output) {
 }
 
 void bmm(Tensor *input, Tensor *weight, Tensor *output) {
-  dim3 blockDim(32, 32);
+  dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x,
     (weight->shape[2] + blockDim.y - 1) / blockDim.y);
@@ -860,7 +862,7 @@ __global__ void _relu(Tensor *input, Tensor *output) {
 }
 
 void relu(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->num_elem() + blockDim.x - 1) / blockDim.x);
   _relu<<<gridDim, blockDim>>>(input, output);
@@ -896,7 +898,7 @@ __global__ void _top_one(Tensor *input, Tensor *output) {
 }
 
 void top_one(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x);
   _top_one<<<gridDim, blockDim>>>(input, output);
@@ -929,7 +931,7 @@ __global__ void _log_softmax(Tensor *input, Tensor *output) {
 }
 
 void log_softmax(Tensor *input, Tensor *output) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(
     (input->shape[0] + blockDim.x - 1) / blockDim.x);
   _log_softmax<<<gridDim, blockDim>>>(input, output);
@@ -948,7 +950,7 @@ __global__ void _check_decoder_termination(Tensor *outputs, Tensor *embidx, floa
 }
 
 void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, int *runnings, int word_idx) {
-  dim3 blockDim(32);
+  dim3 blockDim(BLOCK_SIZE);
   dim3 gridDim(BATCH_SIZE / blockDim.x);
   _check_decoder_termination<<<gridDim, blockDim>>>(outputs, embidx, out_buf, runnings, word_idx);
 }
