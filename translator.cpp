@@ -1,6 +1,7 @@
 #include "translator.h"
 #include "translator.cu"
 #include "util.h"
+#include <omp.h>
 #include <mpi.h>
 #include <cuda_runtime.h>
 
@@ -74,39 +75,40 @@ void Tensor::fill_zeros() {
 }
 
 // Parameters
-Tensor *eW_emb;
-Tensor *eW_ir, *eW_iz, *eW_in;
-Tensor *eW_hr, *eW_hz, *eW_hn;
-Tensor *eb_ir, *eb_iz, *eb_in;
-Tensor *eb_hr, *eb_hz, *eb_hn;
-Tensor *dW_emb;
-Tensor *dW_ir, *dW_iz, *dW_in;
-Tensor *dW_hr, *dW_hz, *dW_hn;
-Tensor *db_ir, *db_iz, *db_in;
-Tensor *db_hr, *db_hz, *db_hn;
-Tensor *dW_attn, *db_attn, *dW_attn_comb, *db_attn_comb, *dW_out, *db_out;
+Tensor **eW_emb;
+Tensor **eW_ir, **eW_iz, **eW_in;
+Tensor **eW_hr, **eW_hz, **eW_hn;
+Tensor **eb_ir, **eb_iz, **eb_in;
+Tensor **eb_hr, **eb_hz, **eb_hn;
+Tensor **dW_emb;
+Tensor **dW_ir, **dW_iz, **dW_in;
+Tensor **dW_hr, **dW_hz, **dW_hn;
+Tensor **db_ir, **db_iz, **db_in;
+Tensor **db_hr, **db_hz, **db_hn;
+Tensor **dW_attn, **db_attn, **dW_attn_comb, **db_attn_comb, **dW_out, **db_out;
 
 // Encoder Activations
-Tensor *encoder_embidx, *encoder_hidden, *encoder_outputs;
-Tensor *encoder_embedded;
-Tensor *encoder_rtmp1, *encoder_rtmp2, *encoder_rtmp3, *encoder_rtmp4, *encoder_rtmp5, *encoder_rt;
-Tensor *encoder_ztmp1, *encoder_ztmp2, *encoder_ztmp3, *encoder_ztmp4, *encoder_ztmp5, *encoder_zt;
-Tensor *encoder_ntmp1, *encoder_ntmp2, *encoder_ntmp3, *encoder_ntmp4, *encoder_ntmp5, *encoder_ntmp6, *encoder_nt;
-Tensor *encoder_htmp1, *encoder_htmp2, *encoder_htmp3, *encoder_ht;
+Tensor **encoder_embidx, **encoder_hidden, **encoder_outputs;
+Tensor **encoder_embedded;
+Tensor **encoder_rtmp1, **encoder_rtmp2, **encoder_rtmp3, **encoder_rtmp4, **encoder_rtmp5, **encoder_rt;
+Tensor **encoder_ztmp1, **encoder_ztmp2, **encoder_ztmp3, **encoder_ztmp4, **encoder_ztmp5, **encoder_zt;
+Tensor **encoder_ntmp1, **encoder_ntmp2, **encoder_ntmp3, **encoder_ntmp4, **encoder_ntmp5, **encoder_ntmp6, **encoder_nt;
+Tensor **encoder_htmp1, **encoder_htmp2, **encoder_htmp3, **encoder_ht;
 
 // Decoder Activations
-Tensor *decoder_embidx, *decoder_hidden, *decoder_embedded, *decoder_embhid;
-Tensor *decoder_attn, *decoder_attn_weights, *decoder_attn_applied, *decoder_embattn;
-Tensor *decoder_attn_comb, *decoder_relu;
-Tensor *decoder_rtmp1, *decoder_rtmp2, *decoder_rtmp3, *decoder_rtmp4, *decoder_rtmp5, *decoder_rt;
-Tensor *decoder_ztmp1, *decoder_ztmp2, *decoder_ztmp3, *decoder_ztmp4, *decoder_ztmp5, *decoder_zt;
-Tensor *decoder_ntmp1, *decoder_ntmp2, *decoder_ntmp3, *decoder_ntmp4, *decoder_ntmp5, *decoder_ntmp6, *decoder_nt;
-Tensor *decoder_htmp1, *decoder_htmp2, *decoder_htmp3, *decoder_ht;
-Tensor *decoder_out, *decoder_logsoftmax, *decoder_outputs;
+Tensor **decoder_embidx, **decoder_hidden, **decoder_embedded, **decoder_embhid;
+Tensor **decoder_attn, **decoder_attn_weights, **decoder_attn_applied, **decoder_embattn;
+Tensor **decoder_attn_comb, **decoder_relu;
+Tensor **decoder_rtmp1, **decoder_rtmp2, **decoder_rtmp3, **decoder_rtmp4, **decoder_rtmp5, **decoder_rt;
+Tensor **decoder_ztmp1, **decoder_ztmp2, **decoder_ztmp3, **decoder_ztmp4, **decoder_ztmp5, **decoder_zt;
+Tensor **decoder_ntmp1, **decoder_ntmp2, **decoder_ntmp3, **decoder_ntmp4, **decoder_ntmp5, **decoder_ntmp6, **decoder_nt;
+Tensor **decoder_htmp1, **decoder_htmp2, **decoder_htmp3, **decoder_ht;
+Tensor **decoder_out, **decoder_logsoftmax, **decoder_outputs;
 
 // Miscellaneous Variables
-int *running_batches;
-float *in_buf, *out_buf, *dev_params;
+int size_per_node;
+int num_devices, size_per_device, **running_batches;
+float **in_buf, **out_buf, **dev_params;
 
 float *parameter = NULL;
 size_t parameter_binary_size = 0;
@@ -147,154 +149,154 @@ void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, 
  * @param [out] output : a tensor of size [N x MAX_LENGTH]. English tokens will be stored in this tensor.
  */
 void translator(Tensor *input, Tensor *output, int N){
-  int mpi_rank, mpi_world_size;
-  MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &mpi_world_size);
+  int node;
+  MPI_Comm_rank(MPI_COMM_WORLD, &node);
 
-  int input_size_per_node = input->num_elem() / mpi_world_size;
   MPI_Scatter(
-    &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
-    &input->buf[mpi_rank * input_size_per_node], input_size_per_node, MPI_FLOAT,
+    &input->buf[node * size_per_node], size_per_node, MPI_FLOAT,
+    &input->buf[node * size_per_node], size_per_node, MPI_FLOAT,
     0, MPI_COMM_WORLD);
 
-  cudaSetDevice(0);
+  #pragma omp parallel num_threads(num_devices)
+  {
+    int dev = omp_get_thread_num();
+    cudaSetDevice(dev);
 
-  cudaMemcpy(
-    dev_params,
-    parameter,
-    sizeof(float) * parameter_binary_size,
-    cudaMemcpyHostToDevice);
+    cudaMemcpy(
+      dev_params[dev],
+      parameter,
+      sizeof(float) * parameter_binary_size,
+      cudaMemcpyHostToDevice);
 
-  init_weights<<<1, 1>>>(eW_emb, eW_ir, eW_iz, eW_in, eW_hr, eW_hz, eW_hn, eb_ir, eb_iz, eb_in, eb_hr, eb_hz, eb_hn, dW_emb, dW_ir, dW_iz, dW_in, dW_hr, dW_hz, dW_hn, db_ir, db_iz, db_in, db_hr, db_hz, db_hn, dW_attn, db_attn, dW_attn_comb, db_attn_comb, dW_out, db_out, dev_params);
+    init_weights<<<1, 1>>>(eW_emb[dev], eW_ir[dev], eW_iz[dev], eW_in[dev], eW_hr[dev], eW_hz[dev], eW_hn[dev], eb_ir[dev], eb_iz[dev], eb_in[dev], eb_hr[dev], eb_hz[dev], eb_hn[dev], dW_emb[dev], dW_ir[dev], dW_iz[dev], dW_in[dev], dW_hr[dev], dW_hz[dev], dW_hn[dev], db_ir[dev], db_iz[dev], db_in[dev], db_hr[dev], db_hz[dev], db_hn[dev], dW_attn[dev], db_attn[dev], dW_attn_comb[dev], db_attn_comb[dev], dW_out[dev], db_out[dev], dev_params[dev]);
 
-  init_buffers(in_buf, out_buf);
+    init_buffers(in_buf[dev], out_buf[dev]);
 
-  cudaMemcpy(
-    in_buf,
-    &input->buf[mpi_rank * input_size_per_node],
-    sizeof(float) * input_size_per_node,
-    cudaMemcpyHostToDevice);
+    cudaMemcpy(
+      in_buf[dev],
+      &input->buf[node * size_per_node + dev * size_per_device],
+      sizeof(float) * size_per_device,
+      cudaMemcpyHostToDevice);
 
-  // Encoder init
-  init_encoder(encoder_hidden, encoder_outputs);
-  init_running_batches(running_batches);
+    // Encoder init
+    init_encoder(encoder_hidden[dev], encoder_outputs[dev]);
+    init_running_batches(running_batches[dev]);
 
-  // Encoder
-  for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
+    // Encoder
+    for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
 
-    check_encoder_termination(in_buf, running_batches, work_idx);
+      check_encoder_termination(in_buf[dev], running_batches[dev], work_idx);
 
-    fetch_words(in_buf, encoder_embidx, work_idx);
-    embedding(encoder_embidx, eW_emb, encoder_embedded);
+      fetch_words(in_buf[dev], encoder_embidx[dev], work_idx);
+      embedding(encoder_embidx[dev], eW_emb[dev], encoder_embedded[dev]);
 
-    // GRU
-    // r_t
-    matvec(encoder_embedded, eW_ir, encoder_rtmp1);
-    elemwise_add(encoder_rtmp1, eb_ir, encoder_rtmp2);
-    matvec(encoder_hidden, eW_hr, encoder_rtmp3);
-    elemwise_add(encoder_rtmp3, eb_hr, encoder_rtmp4);
-    elemwise_add(encoder_rtmp2, encoder_rtmp4, encoder_rtmp5);
-    elemwise_sigmoid(encoder_rtmp5, encoder_rt);
+      // GRU
+      // r_t
+      matvec(encoder_embedded[dev], eW_ir[dev], encoder_rtmp1[dev]);
+      elemwise_add(encoder_rtmp1[dev], eb_ir[dev], encoder_rtmp2[dev]);
+      matvec(encoder_hidden[dev], eW_hr[dev], encoder_rtmp3[dev]);
+      elemwise_add(encoder_rtmp3[dev], eb_hr[dev], encoder_rtmp4[dev]);
+      elemwise_add(encoder_rtmp2[dev], encoder_rtmp4[dev], encoder_rtmp5[dev]);
+      elemwise_sigmoid(encoder_rtmp5[dev], encoder_rt[dev]);
 
-    // z_t
-    matvec(encoder_embedded, eW_iz, encoder_ztmp1);
-    elemwise_add(encoder_ztmp1, eb_iz, encoder_ztmp2);
-    matvec(encoder_hidden, eW_hz, encoder_ztmp3);
-    elemwise_add(encoder_ztmp3, eb_hz, encoder_ztmp4);
-    elemwise_add(encoder_ztmp2, encoder_ztmp4, encoder_ztmp5);
-    elemwise_sigmoid(encoder_ztmp5, encoder_zt);
+      // z_t
+      matvec(encoder_embedded[dev], eW_iz[dev], encoder_ztmp1[dev]);
+      elemwise_add(encoder_ztmp1[dev], eb_iz[dev], encoder_ztmp2[dev]);
+      matvec(encoder_hidden[dev], eW_hz[dev], encoder_ztmp3[dev]);
+      elemwise_add(encoder_ztmp3[dev], eb_hz[dev], encoder_ztmp4[dev]);
+      elemwise_add(encoder_ztmp2[dev], encoder_ztmp4[dev], encoder_ztmp5[dev]);
+      elemwise_sigmoid(encoder_ztmp5[dev], encoder_zt[dev]);
 
-    // n_t
-    matvec(encoder_embedded, eW_in, encoder_ntmp1);
-    elemwise_add(encoder_ntmp1, eb_in, encoder_ntmp2);
-    matvec(encoder_hidden, eW_hn, encoder_ntmp3);
-    elemwise_add(encoder_ntmp3, eb_hn, encoder_ntmp4);
-    elemwise_mult(encoder_rt, encoder_ntmp4, encoder_ntmp5);
-    elemwise_add(encoder_ntmp2, encoder_ntmp5, encoder_ntmp6);
-    elemwise_tanh(encoder_ntmp6, encoder_nt);
+      // n_t
+      matvec(encoder_embedded[dev], eW_in[dev], encoder_ntmp1[dev]);
+      elemwise_add(encoder_ntmp1[dev], eb_in[dev], encoder_ntmp2[dev]);
+      matvec(encoder_hidden[dev], eW_hn[dev], encoder_ntmp3[dev]);
+      elemwise_add(encoder_ntmp3[dev], eb_hn[dev], encoder_ntmp4[dev]);
+      elemwise_mult(encoder_rt[dev], encoder_ntmp4[dev], encoder_ntmp5[dev]);
+      elemwise_add(encoder_ntmp2[dev], encoder_ntmp5[dev], encoder_ntmp6[dev]);
+      elemwise_tanh(encoder_ntmp6[dev], encoder_nt[dev]);
 
-    // h_t
-    elemwise_oneminus(encoder_zt, encoder_htmp1);
-    elemwise_mult(encoder_htmp1, encoder_nt, encoder_htmp2);
-    elemwise_mult(encoder_zt, encoder_hidden, encoder_htmp3);
-    elemwise_add(encoder_htmp2, encoder_htmp3, encoder_ht);
-    select(encoder_ht, encoder_hidden, encoder_hidden, running_batches);
+      // h_t
+      elemwise_oneminus(encoder_zt[dev], encoder_htmp1[dev]);
+      elemwise_mult(encoder_htmp1[dev], encoder_nt[dev], encoder_htmp2[dev]);
+      elemwise_mult(encoder_zt[dev], encoder_hidden[dev], encoder_htmp3[dev]);
+      elemwise_add(encoder_htmp2[dev], encoder_htmp3[dev], encoder_ht[dev]);
+      select(encoder_ht[dev], encoder_hidden[dev], encoder_hidden[dev], running_batches[dev]);
 
-    copy_encoder_outputs(encoder_hidden, encoder_outputs, running_batches, work_idx);
-  } // end Encoder loop
+      copy_encoder_outputs(encoder_hidden[dev], encoder_outputs[dev], running_batches[dev], work_idx);
+    } // end Encoder loop
 
-  // Decoder init
-  decoder_hidden = encoder_hidden;
+    // Decoder init
+    decoder_hidden[dev] = encoder_hidden[dev];
 
-  init_decoder(decoder_embidx);
-  init_running_batches(running_batches);
+    init_decoder(decoder_embidx[dev]);
+    init_running_batches(running_batches[dev]);
 
-  // Decoder
-  for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
+    // Decoder
+    for (int work_idx = 0; work_idx < MAX_LENGTH; ++work_idx) {
 
-    // Embedding
-    embedding(decoder_embidx, dW_emb, decoder_embedded);
+      // Embedding
+      embedding(decoder_embidx[dev], dW_emb[dev], decoder_embedded[dev]);
 
-    // Attention
-    concat(decoder_embedded, decoder_hidden, decoder_embhid);
-    linear(decoder_embhid, dW_attn, db_attn, decoder_attn);
-    softmax(decoder_attn, decoder_attn_weights);
-    bmm(decoder_attn_weights, encoder_outputs, decoder_attn_applied);
-    concat(decoder_embedded, decoder_attn_applied, decoder_embattn);
-    linear(decoder_embattn, dW_attn_comb, db_attn_comb, decoder_attn_comb);
-    relu(decoder_attn_comb, decoder_relu);
+      // Attention
+      concat(decoder_embedded[dev], decoder_hidden[dev], decoder_embhid[dev]);
+      linear(decoder_embhid[dev], dW_attn[dev], db_attn[dev], decoder_attn[dev]);
+      softmax(decoder_attn[dev], decoder_attn_weights[dev]);
+      bmm(decoder_attn_weights[dev], encoder_outputs[dev], decoder_attn_applied[dev]);
+      concat(decoder_embedded[dev], decoder_attn_applied[dev], decoder_embattn[dev]);
+      linear(decoder_embattn[dev], dW_attn_comb[dev], db_attn_comb[dev], decoder_attn_comb[dev]);
+      relu(decoder_attn_comb[dev], decoder_relu[dev]);
 
-    // GRU
-    // r_t
-    matvec(decoder_relu, dW_ir, decoder_rtmp1);
-    elemwise_add(decoder_rtmp1, db_ir, decoder_rtmp2);
-    matvec(decoder_hidden, dW_hr, decoder_rtmp3);
-    elemwise_add(decoder_rtmp3, db_hr, decoder_rtmp4);
-    elemwise_add(decoder_rtmp2, decoder_rtmp4, decoder_rtmp5);
-    elemwise_sigmoid(decoder_rtmp5, decoder_rt);
+      // GRU
+      // r_t
+      matvec(decoder_relu[dev], dW_ir[dev], decoder_rtmp1[dev]);
+      elemwise_add(decoder_rtmp1[dev], db_ir[dev], decoder_rtmp2[dev]);
+      matvec(decoder_hidden[dev], dW_hr[dev], decoder_rtmp3[dev]);
+      elemwise_add(decoder_rtmp3[dev], db_hr[dev], decoder_rtmp4[dev]);
+      elemwise_add(decoder_rtmp2[dev], decoder_rtmp4[dev], decoder_rtmp5[dev]);
+      elemwise_sigmoid(decoder_rtmp5[dev], decoder_rt[dev]);
 
-    // z_t
-    matvec(decoder_relu, dW_iz, decoder_ztmp1);
-    elemwise_add(decoder_ztmp1, db_iz, decoder_ztmp2);
-    matvec(decoder_hidden, dW_hz, decoder_ztmp3);
-    elemwise_add(decoder_ztmp3, db_hz, decoder_ztmp4);
-    elemwise_add(decoder_ztmp2, decoder_ztmp4, decoder_ztmp5);
-    elemwise_sigmoid(decoder_ztmp5, decoder_zt);
+      // z_t
+      matvec(decoder_relu[dev], dW_iz[dev], decoder_ztmp1[dev]);
+      elemwise_add(decoder_ztmp1[dev], db_iz[dev], decoder_ztmp2[dev]);
+      matvec(decoder_hidden[dev], dW_hz[dev], decoder_ztmp3[dev]);
+      elemwise_add(decoder_ztmp3[dev], db_hz[dev], decoder_ztmp4[dev]);
+      elemwise_add(decoder_ztmp2[dev], decoder_ztmp4[dev], decoder_ztmp5[dev]);
+      elemwise_sigmoid(decoder_ztmp5[dev], decoder_zt[dev]);
 
-    // n_t
-    matvec(decoder_relu, dW_in, decoder_ntmp1);
-    elemwise_add(decoder_ntmp1, db_in, decoder_ntmp2);
-    matvec(decoder_hidden, dW_hn, decoder_ntmp3);
-    elemwise_add(decoder_ntmp3, db_hn, decoder_ntmp4);
-    elemwise_mult(decoder_rt, decoder_ntmp4, decoder_ntmp5);
-    elemwise_add(decoder_ntmp2, decoder_ntmp5, decoder_ntmp6);
-    elemwise_tanh(decoder_ntmp6, decoder_nt);
+      // n_t
+      matvec(decoder_relu[dev], dW_in[dev], decoder_ntmp1[dev]);
+      elemwise_add(decoder_ntmp1[dev], db_in[dev], decoder_ntmp2[dev]);
+      matvec(decoder_hidden[dev], dW_hn[dev], decoder_ntmp3[dev]);
+      elemwise_add(decoder_ntmp3[dev], db_hn[dev], decoder_ntmp4[dev]);
+      elemwise_mult(decoder_rt[dev], decoder_ntmp4[dev], decoder_ntmp5[dev]);
+      elemwise_add(decoder_ntmp2[dev], decoder_ntmp5[dev], decoder_ntmp6[dev]);
+      elemwise_tanh(decoder_ntmp6[dev], decoder_nt[dev]);
 
-    // h_t
-    elemwise_oneminus(decoder_zt, decoder_htmp1);
-    elemwise_mult(decoder_htmp1, decoder_nt, decoder_htmp2);
-    elemwise_mult(decoder_zt, decoder_hidden, decoder_htmp3);
-    elemwise_add(decoder_htmp2, decoder_htmp3, decoder_hidden);
+      // h_t
+      elemwise_oneminus(decoder_zt[dev], decoder_htmp1[dev]);
+      elemwise_mult(decoder_htmp1[dev], decoder_nt[dev], decoder_htmp2[dev]);
+      elemwise_mult(decoder_zt[dev], decoder_hidden[dev], decoder_htmp3[dev]);
+      elemwise_add(decoder_htmp2[dev], decoder_htmp3[dev], decoder_hidden[dev]);
 
-    // Select output token
-    linear(decoder_hidden, dW_out, db_out, decoder_out);
-    log_softmax(decoder_out, decoder_logsoftmax);
-    top_one(decoder_logsoftmax, decoder_outputs);
+      // Select output token
+      linear(decoder_hidden[dev], dW_out[dev], db_out[dev], decoder_out[dev]);
+      log_softmax(decoder_out[dev], decoder_logsoftmax[dev]);
+      top_one(decoder_logsoftmax[dev], decoder_outputs[dev]);
 
-    check_decoder_termination(decoder_outputs, decoder_embidx, out_buf, running_batches, work_idx);
-  } // end Decoder loop
+      check_decoder_termination(decoder_outputs[dev], decoder_embidx[dev], out_buf[dev], running_batches[dev], work_idx);
+    } // end Decoder loop
 
-  int output_size_per_node = output->num_elem() / mpi_world_size;
-
-  cudaMemcpy(
-    &output->buf[mpi_rank * output_size_per_node],
-    out_buf,
-    sizeof(float) * output_size_per_node,
-    cudaMemcpyDeviceToHost);
+    cudaMemcpy(
+      &output->buf[node * size_per_node + dev * size_per_device],
+      out_buf[dev],
+      sizeof(float) * size_per_device,
+      cudaMemcpyDeviceToHost);
+  }
 
   MPI_Gather(
-    &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
-    &output->buf[mpi_rank * output_size_per_node], output_size_per_node, MPI_FLOAT,
+    &output->buf[node * size_per_node], size_per_node, MPI_FLOAT,
+    &output->buf[node * size_per_node], size_per_node, MPI_FLOAT,
     0, MPI_COMM_WORLD);
 }
 
@@ -471,129 +473,238 @@ void check_decoder_termination(Tensor *outputs, Tensor *embidx, float *out_buf, 
  * @param [in1] parameter_fname  : the name of the binary file where parameters are stored
  */
 void initialize_translator(const char *parameter_fname, int N){
-  int mpi_rank, mpi_world_size;
-  MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &mpi_world_size);
+  int node, num_nodes;
+  MPI_Comm_rank(MPI_COMM_WORLD, &node);
+  MPI_Comm_size(MPI_COMM_WORLD, &num_nodes);
 
-  BATCH_SIZE = N / mpi_world_size;
+  cudaGetDeviceCount(&num_devices);
 
-  if (mpi_rank == 0) {
+  size_per_node = N * MAX_LENGTH / num_nodes;
+  size_per_device = size_per_node / num_devices;
+  BATCH_SIZE = N / num_nodes / num_devices;
+
+  if (node == 0) {
     parameter = (float *) read_binary(parameter_fname, &parameter_binary_size);
   }
 
   MPI_Bcast(&parameter_binary_size, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
 
-  if (mpi_rank != 0) {
+  if (node != 0) {
     parameter = new float[parameter_binary_size];
   }
 
   MPI_Bcast(parameter, parameter_binary_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-  cudaSetDevice(0);
+  eW_emb = new Tensor *[num_devices];
+  eW_ir = new Tensor *[num_devices];
+  eW_iz = new Tensor *[num_devices];
+  eW_in = new Tensor *[num_devices];
+  eW_hr = new Tensor *[num_devices];
+  eW_hz = new Tensor *[num_devices];
+  eW_hn = new Tensor *[num_devices];
+  eb_ir = new Tensor *[num_devices];
+  eb_iz = new Tensor *[num_devices];
+  eb_in = new Tensor *[num_devices];
+  eb_hr = new Tensor *[num_devices];
+  eb_hz = new Tensor *[num_devices];
+  eb_hn = new Tensor *[num_devices];
+  dW_emb = new Tensor *[num_devices];
+  dW_ir = new Tensor *[num_devices];
+  dW_iz = new Tensor *[num_devices];
+  dW_in = new Tensor *[num_devices];
+  dW_hr = new Tensor *[num_devices];
+  dW_hz = new Tensor *[num_devices];
+  dW_hn = new Tensor *[num_devices];
+  db_ir = new Tensor *[num_devices];
+  db_iz = new Tensor *[num_devices];
+  db_in = new Tensor *[num_devices];
+  db_hr = new Tensor *[num_devices];
+  db_hz = new Tensor *[num_devices];
+  db_hn = new Tensor *[num_devices];
+  dW_attn = new Tensor *[num_devices];
+  db_attn = new Tensor *[num_devices];
+  dW_attn_comb = new Tensor *[num_devices];
+  db_attn_comb = new Tensor *[num_devices];
+  dW_out = new Tensor *[num_devices];
+  db_out = new Tensor *[num_devices];
 
-  CUDA_MALLOC(eW_emb, INPUT_VOCAB_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_ir, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_iz, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_in, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_hr, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_hz, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eW_hn, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_ir, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_iz, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_in, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_hr, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_hz, HIDDEN_SIZE);
-  CUDA_MALLOC(eb_hn, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_emb, OUTPUT_VOCAB_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_ir, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_iz, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_in, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_hr, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_hz, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_hn, HIDDEN_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(db_ir, HIDDEN_SIZE);
-  CUDA_MALLOC(db_iz, HIDDEN_SIZE);
-  CUDA_MALLOC(db_in, HIDDEN_SIZE);
-  CUDA_MALLOC(db_hr, HIDDEN_SIZE);
-  CUDA_MALLOC(db_hz, HIDDEN_SIZE);
-  CUDA_MALLOC(db_hn, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_attn, MAX_LENGTH, 2 * HIDDEN_SIZE);
-  CUDA_MALLOC(db_attn, MAX_LENGTH);
-  CUDA_MALLOC(dW_attn_comb, HIDDEN_SIZE, 2 * HIDDEN_SIZE);
-  CUDA_MALLOC(db_attn_comb, HIDDEN_SIZE);
-  CUDA_MALLOC(dW_out, OUTPUT_VOCAB_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(db_out, OUTPUT_VOCAB_SIZE);
+  encoder_embidx = new Tensor *[num_devices];
+  encoder_hidden = new Tensor *[num_devices];
+  encoder_outputs = new Tensor *[num_devices];
+  encoder_embedded = new Tensor *[num_devices];
+  encoder_rtmp1 = new Tensor *[num_devices];
+  encoder_rtmp2 = new Tensor *[num_devices];
+  encoder_rtmp3 = new Tensor *[num_devices];
+  encoder_rtmp4 = new Tensor *[num_devices];
+  encoder_rtmp5 = new Tensor *[num_devices];
+  encoder_rt = new Tensor *[num_devices];
+  encoder_ztmp1 = new Tensor *[num_devices];
+  encoder_ztmp2 = new Tensor *[num_devices];
+  encoder_ztmp3 = new Tensor *[num_devices];
+  encoder_ztmp4 = new Tensor *[num_devices];
+  encoder_ztmp5 = new Tensor *[num_devices];
+  encoder_zt = new Tensor *[num_devices];
+  encoder_ntmp1 = new Tensor *[num_devices];
+  encoder_ntmp2 = new Tensor *[num_devices];
+  encoder_ntmp3 = new Tensor *[num_devices];
+  encoder_ntmp4 = new Tensor *[num_devices];
+  encoder_ntmp5 = new Tensor *[num_devices];
+  encoder_ntmp6 = new Tensor *[num_devices];
+  encoder_nt = new Tensor *[num_devices];
+  encoder_htmp1 = new Tensor *[num_devices];
+  encoder_htmp2 = new Tensor *[num_devices];
+  encoder_htmp3 = new Tensor *[num_devices];
+  encoder_ht = new Tensor *[num_devices];
 
-  CUDA_MALLOC(encoder_embidx, BATCH_SIZE);
-  CUDA_MALLOC(encoder_hidden, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_outputs, BATCH_SIZE, MAX_LENGTH, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_embedded, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rtmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rtmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rtmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rtmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rtmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_rt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ztmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ztmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ztmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ztmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ztmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_zt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ntmp6, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_nt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_htmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_htmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_htmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(encoder_ht, BATCH_SIZE, HIDDEN_SIZE);
+  decoder_embidx = new Tensor *[num_devices];
+  decoder_hidden = new Tensor *[num_devices];
+  decoder_embedded = new Tensor *[num_devices];
+  decoder_embhid = new Tensor *[num_devices];
+  decoder_attn = new Tensor *[num_devices];
+  decoder_attn_weights = new Tensor *[num_devices];
+  decoder_attn_applied = new Tensor *[num_devices];
+  decoder_embattn = new Tensor *[num_devices];
+  decoder_attn_comb = new Tensor *[num_devices];
+  decoder_relu = new Tensor *[num_devices];
+  decoder_rtmp1 = new Tensor *[num_devices];
+  decoder_rtmp2 = new Tensor *[num_devices];
+  decoder_rtmp3 = new Tensor *[num_devices];
+  decoder_rtmp4 = new Tensor *[num_devices];
+  decoder_rtmp5 = new Tensor *[num_devices];
+  decoder_rt = new Tensor *[num_devices];
+  decoder_ztmp1 = new Tensor *[num_devices];
+  decoder_ztmp2 = new Tensor *[num_devices];
+  decoder_ztmp3 = new Tensor *[num_devices];
+  decoder_ztmp4 = new Tensor *[num_devices];
+  decoder_ztmp5 = new Tensor *[num_devices];
+  decoder_zt = new Tensor *[num_devices];
+  decoder_ntmp1 = new Tensor *[num_devices];
+  decoder_ntmp2 = new Tensor *[num_devices];
+  decoder_ntmp3 = new Tensor *[num_devices];
+  decoder_ntmp4 = new Tensor *[num_devices];
+  decoder_ntmp5 = new Tensor *[num_devices];
+  decoder_ntmp6 = new Tensor *[num_devices];
+  decoder_nt = new Tensor *[num_devices];
+  decoder_htmp1 = new Tensor *[num_devices];
+  decoder_htmp2 = new Tensor *[num_devices];
+  decoder_htmp3 = new Tensor *[num_devices];
+  decoder_ht = new Tensor *[num_devices];
+  decoder_out = new Tensor *[num_devices];
+  decoder_logsoftmax = new Tensor *[num_devices];
+  decoder_outputs = new Tensor *[num_devices];
 
-  CUDA_MALLOC(decoder_embidx, BATCH_SIZE);
-  CUDA_MALLOC(decoder_hidden, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_embedded, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_embhid, BATCH_SIZE, 2 * HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_attn, BATCH_SIZE, MAX_LENGTH);
-  CUDA_MALLOC(decoder_attn_weights, BATCH_SIZE, MAX_LENGTH);
-  CUDA_MALLOC(decoder_attn_applied, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_embattn, BATCH_SIZE, 2 * HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_attn_comb, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_relu, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rtmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rtmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rtmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rtmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rtmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_rt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ztmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ztmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ztmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ztmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ztmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_zt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp4, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp5, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ntmp6, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_nt, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_htmp1, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_htmp2, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_htmp3, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_ht, BATCH_SIZE, HIDDEN_SIZE);
-  CUDA_MALLOC(decoder_out, BATCH_SIZE, OUTPUT_VOCAB_SIZE);
-  CUDA_MALLOC(decoder_logsoftmax, BATCH_SIZE, OUTPUT_VOCAB_SIZE);
-  CUDA_MALLOC(decoder_outputs, BATCH_SIZE);
+  running_batches = new int *[num_devices];
+  in_buf = new float *[num_devices];
+  out_buf = new float *[num_devices];
+  dev_params = new float *[num_devices];
 
-  cudaMalloc((void **)&running_batches, sizeof(int) * BATCH_SIZE);
+  for (int dev = 0; dev < num_devices; ++dev) {
+    cudaSetDevice(dev);
 
-  cudaMalloc((void **)&in_buf, sizeof(float) * N * MAX_LENGTH);
-  cudaMalloc((void **)&out_buf, sizeof(float) * N * MAX_LENGTH);
-  cudaMalloc((void **)&dev_params, sizeof(float) * parameter_binary_size);
+    CUDA_MALLOC(eW_emb[dev], INPUT_VOCAB_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_ir[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_iz[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_in[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_hr[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_hz[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eW_hn[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(eb_ir[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(eb_iz[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(eb_in[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(eb_hr[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(eb_hz[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(eb_hn[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(dW_emb[dev], OUTPUT_VOCAB_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_ir[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_iz[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_in[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_hr[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_hz[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(dW_hn[dev], HIDDEN_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(db_ir[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(db_iz[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(db_in[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(db_hr[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(db_hz[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(db_hn[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(dW_attn[dev], MAX_LENGTH, 2 * HIDDEN_SIZE);
+    CUDA_MALLOC(db_attn[dev], MAX_LENGTH);
+    CUDA_MALLOC(dW_attn_comb[dev], HIDDEN_SIZE, 2 * HIDDEN_SIZE);
+    CUDA_MALLOC(db_attn_comb[dev], HIDDEN_SIZE);
+    CUDA_MALLOC(dW_out[dev], OUTPUT_VOCAB_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(db_out[dev], OUTPUT_VOCAB_SIZE);
+
+    CUDA_MALLOC(encoder_embidx[dev], BATCH_SIZE);
+    CUDA_MALLOC(encoder_hidden[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_outputs[dev], BATCH_SIZE, MAX_LENGTH, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_embedded[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rtmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rtmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rtmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rtmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rtmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_rt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ztmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ztmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ztmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ztmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ztmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_zt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ntmp6[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_nt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_htmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_htmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_htmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(encoder_ht[dev], BATCH_SIZE, HIDDEN_SIZE);
+
+    CUDA_MALLOC(decoder_embidx[dev], BATCH_SIZE);
+    CUDA_MALLOC(decoder_hidden[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_embedded[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_embhid[dev], BATCH_SIZE, 2 * HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_attn[dev], BATCH_SIZE, MAX_LENGTH);
+    CUDA_MALLOC(decoder_attn_weights[dev], BATCH_SIZE, MAX_LENGTH);
+    CUDA_MALLOC(decoder_attn_applied[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_embattn[dev], BATCH_SIZE, 2 * HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_attn_comb[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_relu[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rtmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rtmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rtmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rtmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rtmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_rt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ztmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ztmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ztmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ztmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ztmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_zt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp4[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp5[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ntmp6[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_nt[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_htmp1[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_htmp2[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_htmp3[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_ht[dev], BATCH_SIZE, HIDDEN_SIZE);
+    CUDA_MALLOC(decoder_out[dev], BATCH_SIZE, OUTPUT_VOCAB_SIZE);
+    CUDA_MALLOC(decoder_logsoftmax[dev], BATCH_SIZE, OUTPUT_VOCAB_SIZE);
+    CUDA_MALLOC(decoder_outputs[dev], BATCH_SIZE);
+
+    cudaMalloc((void **)&running_batches[dev], sizeof(int) * BATCH_SIZE);
+
+    cudaMalloc((void **)&in_buf[dev], sizeof(float) * size_per_device);
+    cudaMalloc((void **)&out_buf[dev], sizeof(float) * size_per_device);
+    cudaMalloc((void **)&dev_params[dev], sizeof(float) * parameter_binary_size);
+  }
 }
 
 /*
@@ -601,116 +712,221 @@ void initialize_translator(const char *parameter_fname, int N){
  * @brief : free all dynamically allocated variables
  */
 void finalize_translator(){
-  int mpi_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+  for (int dev = 0; dev < num_devices; ++dev) {
+    cudaSetDevice(dev);
 
-  fprintf(stderr, "\n");
+    // free parameters
+    CUDA_DELETE(eW_emb[dev]);
+    CUDA_DELETE(eW_ir[dev]);
+    CUDA_DELETE(eW_iz[dev]);
+    CUDA_DELETE(eW_in[dev]);
+    CUDA_DELETE(eW_hr[dev]);
+    CUDA_DELETE(eW_hz[dev]);
+    CUDA_DELETE(eW_hn[dev]);
+    CUDA_DELETE(eb_ir[dev]);
+    CUDA_DELETE(eb_iz[dev]);
+    CUDA_DELETE(eb_in[dev]);
+    CUDA_DELETE(eb_hr[dev]);
+    CUDA_DELETE(eb_hz[dev]);
+    CUDA_DELETE(eb_hn[dev]);
+    CUDA_DELETE(dW_emb[dev]);
+    CUDA_DELETE(dW_ir[dev]);
+    CUDA_DELETE(dW_iz[dev]);
+    CUDA_DELETE(dW_in[dev]);
+    CUDA_DELETE(dW_hr[dev]);
+    CUDA_DELETE(dW_hz[dev]);
+    CUDA_DELETE(dW_hn[dev]);
+    CUDA_DELETE(db_ir[dev]);
+    CUDA_DELETE(db_iz[dev]);
+    CUDA_DELETE(db_in[dev]);
+    CUDA_DELETE(db_hr[dev]);
+    CUDA_DELETE(db_hz[dev]);
+    CUDA_DELETE(db_hn[dev]);
+    CUDA_DELETE(dW_attn[dev]);
+    CUDA_DELETE(db_attn[dev]);
+    CUDA_DELETE(dW_attn_comb[dev]);
+    CUDA_DELETE(db_attn_comb[dev]);
+    CUDA_DELETE(dW_out[dev]);
+    CUDA_DELETE(db_out[dev]);
+
+    // free encoder activations
+    CUDA_DELETE(encoder_embidx[dev]);
+    CUDA_DELETE(encoder_hidden[dev]);
+    CUDA_DELETE(encoder_outputs[dev]);
+    CUDA_DELETE(encoder_embedded[dev]);
+    CUDA_DELETE(encoder_rtmp1[dev]);
+    CUDA_DELETE(encoder_rtmp2[dev]);
+    CUDA_DELETE(encoder_rtmp3[dev]);
+    CUDA_DELETE(encoder_rtmp4[dev]);
+    CUDA_DELETE(encoder_rtmp5[dev]);
+    CUDA_DELETE(encoder_rt[dev]);
+    CUDA_DELETE(encoder_ztmp1[dev]);
+    CUDA_DELETE(encoder_ztmp2[dev]);
+    CUDA_DELETE(encoder_ztmp3[dev]);
+    CUDA_DELETE(encoder_ztmp4[dev]);
+    CUDA_DELETE(encoder_ztmp5[dev]);
+    CUDA_DELETE(encoder_zt[dev]);
+    CUDA_DELETE(encoder_ntmp1[dev]);
+    CUDA_DELETE(encoder_ntmp2[dev]);
+    CUDA_DELETE(encoder_ntmp3[dev]);
+    CUDA_DELETE(encoder_ntmp4[dev]);
+    CUDA_DELETE(encoder_ntmp5[dev]);
+    CUDA_DELETE(encoder_ntmp6[dev]);
+    CUDA_DELETE(encoder_nt[dev]);
+    CUDA_DELETE(encoder_htmp1[dev]);
+    CUDA_DELETE(encoder_htmp2[dev]);
+    CUDA_DELETE(encoder_htmp3[dev]);
+    CUDA_DELETE(encoder_ht[dev]);
+
+    // free decoder activations
+    CUDA_DELETE(decoder_embidx[dev]);
+    CUDA_DELETE(decoder_embedded[dev]);
+    CUDA_DELETE(decoder_embhid[dev]);
+    CUDA_DELETE(decoder_attn[dev]);
+    CUDA_DELETE(decoder_attn_weights[dev]);
+    CUDA_DELETE(decoder_attn_applied[dev]);
+    CUDA_DELETE(decoder_embattn[dev]);
+    CUDA_DELETE(decoder_attn_comb[dev]);
+    CUDA_DELETE(decoder_relu[dev]);
+    CUDA_DELETE(decoder_rtmp1[dev]);
+    CUDA_DELETE(decoder_rtmp2[dev]);
+    CUDA_DELETE(decoder_rtmp3[dev]);
+    CUDA_DELETE(decoder_rtmp4[dev]);
+    CUDA_DELETE(decoder_rtmp5[dev]);
+    CUDA_DELETE(decoder_rt[dev]);
+    CUDA_DELETE(decoder_ztmp1[dev]);
+    CUDA_DELETE(decoder_ztmp2[dev]);
+    CUDA_DELETE(decoder_ztmp3[dev]);
+    CUDA_DELETE(decoder_ztmp4[dev]);
+    CUDA_DELETE(decoder_ztmp5[dev]);
+    CUDA_DELETE(decoder_zt[dev]);
+    CUDA_DELETE(decoder_ntmp1[dev]);
+    CUDA_DELETE(decoder_ntmp2[dev]);
+    CUDA_DELETE(decoder_ntmp3[dev]);
+    CUDA_DELETE(decoder_ntmp4[dev]);
+    CUDA_DELETE(decoder_ntmp5[dev]);
+    CUDA_DELETE(decoder_ntmp6[dev]);
+    CUDA_DELETE(decoder_nt[dev]);
+    CUDA_DELETE(decoder_htmp1[dev]);
+    CUDA_DELETE(decoder_htmp2[dev]);
+    CUDA_DELETE(decoder_htmp3[dev]);
+    CUDA_DELETE(decoder_ht[dev]);
+    CUDA_DELETE(decoder_out[dev]);
+    CUDA_DELETE(decoder_logsoftmax[dev]);
+    CUDA_DELETE(decoder_outputs[dev]);
+
+    // free misc. variables
+    cudaFree(running_batches[dev]);
+    cudaFree(in_buf[dev]);
+    cudaFree(out_buf[dev]);
+    cudaFree(dev_params[dev]);
+  }
 
   // free parameters
-  CUDA_DELETE(eW_emb);
-  CUDA_DELETE(eW_ir);
-  CUDA_DELETE(eW_iz);
-  CUDA_DELETE(eW_in);
-  CUDA_DELETE(eW_hr);
-  CUDA_DELETE(eW_hz);
-  CUDA_DELETE(eW_hn);
-  CUDA_DELETE(eb_ir);
-  CUDA_DELETE(eb_iz);
-  CUDA_DELETE(eb_in);
-  CUDA_DELETE(eb_hr);
-  CUDA_DELETE(eb_hz);
-  CUDA_DELETE(eb_hn);
-  CUDA_DELETE(dW_emb);
-  CUDA_DELETE(dW_ir);
-  CUDA_DELETE(dW_iz);
-  CUDA_DELETE(dW_in);
-  CUDA_DELETE(dW_hr);
-  CUDA_DELETE(dW_hz);
-  CUDA_DELETE(dW_hn);
-  CUDA_DELETE(db_ir);
-  CUDA_DELETE(db_iz);
-  CUDA_DELETE(db_in);
-  CUDA_DELETE(db_hr);
-  CUDA_DELETE(db_hz);
-  CUDA_DELETE(db_hn);
-  CUDA_DELETE(dW_attn);
-  CUDA_DELETE(db_attn);
-  CUDA_DELETE(dW_attn_comb);
-  CUDA_DELETE(db_attn_comb);
-  CUDA_DELETE(dW_out);
-  CUDA_DELETE(db_out);
+  delete[] eW_emb;
+  delete[] eW_ir;
+  delete[] eW_iz;
+  delete[] eW_in;
+  delete[] eW_hr;
+  delete[] eW_hz;
+  delete[] eW_hn;
+  delete[] eb_ir;
+  delete[] eb_iz;
+  delete[] eb_in;
+  delete[] eb_hr;
+  delete[] eb_hz;
+  delete[] eb_hn;
+  delete[] dW_emb;
+  delete[] dW_ir;
+  delete[] dW_iz;
+  delete[] dW_in;
+  delete[] dW_hr;
+  delete[] dW_hz;
+  delete[] dW_hn;
+  delete[] db_ir;
+  delete[] db_iz;
+  delete[] db_in;
+  delete[] db_hr;
+  delete[] db_hz;
+  delete[] db_hn;
+  delete[] dW_attn;
+  delete[] db_attn;
+  delete[] dW_attn_comb;
+  delete[] db_attn_comb;
+  delete[] dW_out;
+  delete[] db_out;
 
   // free encoder activations
-  CUDA_DELETE(encoder_embidx);
-  CUDA_DELETE(encoder_hidden);
-  CUDA_DELETE(encoder_outputs);
-  CUDA_DELETE(encoder_embedded);
-  CUDA_DELETE(encoder_rtmp1);
-  CUDA_DELETE(encoder_rtmp2);
-  CUDA_DELETE(encoder_rtmp3);
-  CUDA_DELETE(encoder_rtmp4);
-  CUDA_DELETE(encoder_rtmp5);
-  CUDA_DELETE(encoder_rt);
-  CUDA_DELETE(encoder_ztmp1);
-  CUDA_DELETE(encoder_ztmp2);
-  CUDA_DELETE(encoder_ztmp3);
-  CUDA_DELETE(encoder_ztmp4);
-  CUDA_DELETE(encoder_ztmp5);
-  CUDA_DELETE(encoder_zt);
-  CUDA_DELETE(encoder_ntmp1);
-  CUDA_DELETE(encoder_ntmp2);
-  CUDA_DELETE(encoder_ntmp3);
-  CUDA_DELETE(encoder_ntmp4);
-  CUDA_DELETE(encoder_ntmp5);
-  CUDA_DELETE(encoder_ntmp6);
-  CUDA_DELETE(encoder_nt);
-  CUDA_DELETE(encoder_htmp1);
-  CUDA_DELETE(encoder_htmp2);
-  CUDA_DELETE(encoder_htmp3);
-  CUDA_DELETE(encoder_ht);
+  delete[] encoder_embidx;
+  delete[] encoder_hidden;
+  delete[] encoder_outputs;
+  delete[] encoder_embedded;
+  delete[] encoder_rtmp1;
+  delete[] encoder_rtmp2;
+  delete[] encoder_rtmp3;
+  delete[] encoder_rtmp4;
+  delete[] encoder_rtmp5;
+  delete[] encoder_rt;
+  delete[] encoder_ztmp1;
+  delete[] encoder_ztmp2;
+  delete[] encoder_ztmp3;
+  delete[] encoder_ztmp4;
+  delete[] encoder_ztmp5;
+  delete[] encoder_zt;
+  delete[] encoder_ntmp1;
+  delete[] encoder_ntmp2;
+  delete[] encoder_ntmp3;
+  delete[] encoder_ntmp4;
+  delete[] encoder_ntmp5;
+  delete[] encoder_ntmp6;
+  delete[] encoder_nt;
+  delete[] encoder_htmp1;
+  delete[] encoder_htmp2;
+  delete[] encoder_htmp3;
+  delete[] encoder_ht;
 
   // free decoder activations
-  CUDA_DELETE(decoder_embidx);
-  CUDA_DELETE(decoder_embedded);
-  CUDA_DELETE(decoder_embhid);
-  CUDA_DELETE(decoder_attn);
-  CUDA_DELETE(decoder_attn_weights);
-  CUDA_DELETE(decoder_attn_applied);
-  CUDA_DELETE(decoder_embattn);
-  CUDA_DELETE(decoder_attn_comb);
-  CUDA_DELETE(decoder_relu);
-  CUDA_DELETE(decoder_rtmp1);
-  CUDA_DELETE(decoder_rtmp2);
-  CUDA_DELETE(decoder_rtmp3);
-  CUDA_DELETE(decoder_rtmp4);
-  CUDA_DELETE(decoder_rtmp5);
-  CUDA_DELETE(decoder_rt);
-  CUDA_DELETE(decoder_ztmp1);
-  CUDA_DELETE(decoder_ztmp2);
-  CUDA_DELETE(decoder_ztmp3);
-  CUDA_DELETE(decoder_ztmp4);
-  CUDA_DELETE(decoder_ztmp5);
-  CUDA_DELETE(decoder_zt);
-  CUDA_DELETE(decoder_ntmp1);
-  CUDA_DELETE(decoder_ntmp2);
-  CUDA_DELETE(decoder_ntmp3);
-  CUDA_DELETE(decoder_ntmp4);
-  CUDA_DELETE(decoder_ntmp5);
-  CUDA_DELETE(decoder_ntmp6);
-  CUDA_DELETE(decoder_nt);
-  CUDA_DELETE(decoder_htmp1);
-  CUDA_DELETE(decoder_htmp2);
-  CUDA_DELETE(decoder_htmp3);
-  CUDA_DELETE(decoder_ht);
-  CUDA_DELETE(decoder_out);
-  CUDA_DELETE(decoder_logsoftmax);
-  CUDA_DELETE(decoder_outputs);
+  delete[] decoder_embidx;
+  delete[] decoder_embedded;
+  delete[] decoder_embhid;
+  delete[] decoder_attn;
+  delete[] decoder_attn_weights;
+  delete[] decoder_attn_applied;
+  delete[] decoder_embattn;
+  delete[] decoder_attn_comb;
+  delete[] decoder_relu;
+  delete[] decoder_rtmp1;
+  delete[] decoder_rtmp2;
+  delete[] decoder_rtmp3;
+  delete[] decoder_rtmp4;
+  delete[] decoder_rtmp5;
+  delete[] decoder_rt;
+  delete[] decoder_ztmp1;
+  delete[] decoder_ztmp2;
+  delete[] decoder_ztmp3;
+  delete[] decoder_ztmp4;
+  delete[] decoder_ztmp5;
+  delete[] decoder_zt;
+  delete[] decoder_ntmp1;
+  delete[] decoder_ntmp2;
+  delete[] decoder_ntmp3;
+  delete[] decoder_ntmp4;
+  delete[] decoder_ntmp5;
+  delete[] decoder_ntmp6;
+  delete[] decoder_nt;
+  delete[] decoder_htmp1;
+  delete[] decoder_htmp2;
+  delete[] decoder_htmp3;
+  delete[] decoder_ht;
+  delete[] decoder_out;
+  delete[] decoder_logsoftmax;
+  delete[] decoder_outputs;
 
   // free misc. variables
-  cudaFree(running_batches);
-  cudaFree(in_buf);
-  cudaFree(out_buf);
-  cudaFree(dev_params);
+  delete[] running_batches;
+  delete[] in_buf;
+  delete[] out_buf;
+  delete[] dev_params;
 
   delete[] parameter;
 }
